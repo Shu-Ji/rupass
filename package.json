@@ -1,0 +1,13 @@
+{
+  "name": "rupass",
+  "private": true,
+  "scripts": {
+    "dev": "cargo run",
+    "build": "cargo build",
+    "build:release": "cargo build --release",
+    "check": "cargo check",
+    "test": "cargo test",
+    "fmt": "cargo fmt",
+    "clippy": "cargo clippy --all-targets --all-features -- -D warnings"
+  }
+}
