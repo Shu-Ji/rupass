@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::{Context, Result, anyhow, bail};
 use argon2::Argon2;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -57,10 +55,6 @@ pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
 }
 
 pub(crate) fn read_new_password(team: &str) -> Result<String> {
-    if let Some(password) = password_from_env(team) {
-        return Ok(password);
-    }
-
     let first = rpassword::prompt_password(format!("new password for {team}: "))
         .context("failed to read password")?;
     let second = rpassword::prompt_password(format!("confirm password for {team}: "))
@@ -77,10 +71,6 @@ pub(crate) fn read_new_password(team: &str) -> Result<String> {
 }
 
 pub(crate) fn read_existing_password(team: &str) -> Result<String> {
-    if let Some(password) = password_from_env(team) {
-        return Ok(password);
-    }
-
     let password = rpassword::prompt_password(format!("password for {team}: "))
         .context("failed to read password")?;
     if password.is_empty() {
@@ -89,31 +79,6 @@ pub(crate) fn read_existing_password(team: &str) -> Result<String> {
 
     Ok(password)
 }
-
-fn password_from_env(team: &str) -> Option<String> {
-    let team_var = format!(
-        "RUPASS_PASSWORD_{}",
-        team.chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() {
-                    ch.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    );
-
-    env::var(team_var)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            env::var("RUPASS_PASSWORD")
-                .ok()
-                .filter(|value| !value.is_empty())
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

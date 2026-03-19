@@ -20,6 +20,7 @@ pub(crate) struct TeamConfig {
     pub(crate) display_name: String,
     pub(crate) salt: String,
     pub(crate) password_verifier: String,
+    pub(crate) cipher_key: Option<String>,
     pub(crate) git_remote: Option<String>,
 }
 
@@ -60,6 +61,16 @@ impl AppPaths {
     pub(crate) fn secret_path(&self, team: &str, key: &str) -> PathBuf {
         let digest = hex::encode(Sha256::digest(key.as_bytes()));
         self.team_store_dir(team).join(format!("{digest}.json"))
+    }
+}
+
+#[cfg(test)]
+impl AppPaths {
+    pub(crate) fn from_dirs(config_dir: PathBuf, store_dir: PathBuf) -> Self {
+        Self {
+            config_dir,
+            store_dir,
+        }
     }
 }
 
@@ -170,7 +181,7 @@ mod tests {
 
     #[test]
     fn team_name_must_end_with_team() {
-        assert!(validate_team_name("default_team").is_ok());
+        assert!(validate_team_name("dev_team").is_ok());
         assert!(validate_team_name("default").is_err());
         assert!(validate_team_name("Default_team").is_err());
     }
