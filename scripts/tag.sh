@@ -5,8 +5,13 @@ set -eu
 version="${1:-}"
 
 if [ -z "$version" ]; then
-  echo "usage: pnpm tag v1.0.0" >&2
-  exit 1
+  tags="$(git tag --list --sort=-v:refname)"
+  if [ -z "$tags" ]; then
+    echo "no tags"
+  else
+    echo "$tags"
+  fi
+  exit 0
 fi
 
 case "$version" in
