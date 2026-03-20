@@ -5,9 +5,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub(crate) const DEFAULT_TEAM_NAME: &str = "default_team";
-pub(crate) const DEFAULT_TEAM_DISPLAY_NAME: &str = "默认团队";
-
 #[derive(Debug, Clone)]
 pub(crate) struct AppPaths {
     config_dir: PathBuf,

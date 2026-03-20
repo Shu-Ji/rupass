@@ -54,22 +54,6 @@ pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
     bytes
 }
 
-pub(crate) fn read_new_password(team: &str) -> Result<String> {
-    let first = rpassword::prompt_password(format!("new password for {team}: "))
-        .context("failed to read password")?;
-    let second = rpassword::prompt_password(format!("confirm password for {team}: "))
-        .context("failed to read password confirmation")?;
-
-    if first != second {
-        bail!("passwords do not match");
-    }
-    if first.is_empty() {
-        bail!("password cannot be empty");
-    }
-
-    Ok(first)
-}
-
 pub(crate) fn read_existing_password(team: &str) -> Result<String> {
     let password = rpassword::prompt_password(format!("password for {team}: "))
         .context("failed to read password")?;
