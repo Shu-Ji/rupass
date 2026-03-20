@@ -22,10 +22,11 @@ pub(crate) struct TeamCommandInput {
 #[command(
     name = "rupass",
     version,
+    disable_help_subcommand = true,
     about = "轻量级团队密码管理工具",
     override_usage = "rupass <COMMAND>\n       rupass <team> get <key>",
     long_about = "rupass 是一个轻量级团队密码管理工具。\n日常管理通过 TUI 完成，CLI 只保留读取和全量同步入口。",
-    after_help = "命令示例:\n  rupass get db_password\n  rupass this_is_a_test_team get db_password\n  rupass sync-all\n  rupass tui\n\n说明:\n  `get` 读取密钥值。\n  如果本地只有一个团队，可省略 team；如果有多个团队，必须显式传入。\n  团队创建、删除、写入、更新、remote 配置等操作请使用 `rupass tui`。"
+    after_help = "示例:\n  rupass tui\n  rupass sync-all\n  rupass get db_password\n  rupass this_is_a_test_team get db_password"
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
