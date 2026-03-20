@@ -5,6 +5,10 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::tui_app::{App, Dialog, FormDialog, Page};
+use crate::tui_style::{
+    accent_style, action_line, danger_style, muted, primary_style, section_style,
+    split_status_lines, status_style, success_style,
+};
 
 pub(crate) fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -193,17 +197,17 @@ fn secret_detail_panel(app: &App) -> Paragraph<'_> {
         if let Some(key) = app.selected_key() {
             lines.push(Line::from(vec![
                 Span::styled("当前 Key: ", muted()),
-                Span::styled(
-                    key,
-                    primary_style().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(key, primary_style().add_modifier(Modifier::BOLD)),
             ]));
             lines.push(Line::from(Span::styled(
                 "当前 key 已选中，可直接查看 value。",
                 accent_style(),
             )));
         } else {
-            lines.push(Line::from(Span::styled("还没有可用的 key。", accent_style())));
+            lines.push(Line::from(Span::styled(
+                "还没有可用的 key。",
+                accent_style(),
+            )));
         }
     } else {
         lines.push(Line::from("没有可用团队"));
@@ -404,32 +408,6 @@ fn popup_area(area: Rect, width_percent: u16, height: u16) -> Rect {
         .split(vertical[0])[0]
 }
 
-fn muted() -> Style {
-    Style::default().fg(Color::Rgb(140, 154, 171))
-}
-
-fn section_style() -> Style {
-    Style::default()
-        .fg(Color::Rgb(242, 208, 129))
-        .add_modifier(Modifier::BOLD)
-}
-
-fn primary_style() -> Style {
-    Style::default().fg(Color::Rgb(242, 208, 129))
-}
-
-fn accent_style() -> Style {
-    Style::default().fg(Color::Rgb(120, 188, 255))
-}
-
-fn success_style() -> Style {
-    Style::default().fg(Color::Rgb(116, 196, 118))
-}
-
-fn danger_style() -> Style {
-    Style::default().fg(Color::Rgb(245, 123, 113))
-}
-
 fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
     match &app.page {
         Page::TeamList => {
@@ -485,31 +463,4 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("q", "退出", muted()),
         ],
     }
-}
-
-fn action_line(key: &'static str, label: &'static str, style: Style) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{key}: "), style.add_modifier(Modifier::BOLD)),
-        Span::styled(label, style),
-    ])
-}
-
-fn status_style(line: &str) -> Style {
-    if line.starts_with("错误:") {
-        return danger_style().add_modifier(Modifier::BOLD);
-    }
-    if line.starts_with("已删除") {
-        return danger_style();
-    }
-    if line.starts_with("已") {
-        return success_style();
-    }
-    primary_style()
-}
-
-fn split_status_lines(status: &str) -> Vec<String> {
-    if status.contains(" · ") {
-        return status.split(" · ").map(ToOwned::to_owned).collect();
-    }
-    vec![status.to_string()]
 }
