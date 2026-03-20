@@ -8,6 +8,7 @@
     "check": "cargo check",
     "test": "cargo test",
     "fmt": "cargo fmt",
-    "clippy": "cargo clippy --all-targets --all-features -- -D warnings"
+    "clippy": "cargo clippy --all-targets --all-features -- -D warnings",
+    "tag": "./scripts/tag.sh"
   }
 }
