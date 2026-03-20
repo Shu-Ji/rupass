@@ -112,6 +112,7 @@ fn team_list(app: &App) -> List<'_> {
 fn team_detail_panel(app: &App) -> Paragraph<'_> {
     let mut lines = Vec::new();
     if let Some(team) = app.selected_team() {
+        let unlocked = app.unlocked.contains_key(&team.team_name);
         lines.push(Line::from(vec![
             Span::styled("显示名: ", muted()),
             Span::styled(
@@ -120,14 +121,17 @@ fn team_detail_panel(app: &App) -> Paragraph<'_> {
             ),
         ]));
         lines.push(Line::from(format!("英文名: {}", team.team_name)));
-        lines.push(Line::from(format!(
-            "状态: {}",
-            if app.unlocked.contains_key(&team.team_name) {
-                "已解锁"
-            } else {
-                "未解锁"
-            }
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("状态: ", muted()),
+            Span::styled(
+                if unlocked { "已解锁" } else { "未解锁" },
+                if unlocked {
+                    success_style().add_modifier(Modifier::BOLD)
+                } else {
+                    danger_style().add_modifier(Modifier::BOLD)
+                },
+            ),
+        ]));
         lines.push(Line::from(format!(
             "Remote: {}",
             team.git_remote.as_deref().unwrap_or("未设置")
@@ -165,6 +169,7 @@ fn key_list(app: &App) -> List<'_> {
 fn secret_detail_panel(app: &App) -> Paragraph<'_> {
     let mut lines = Vec::new();
     if let Some(team) = app.selected_team() {
+        let unlocked = app.unlocked.contains_key(&team.team_name);
         lines.push(Line::from(vec![
             Span::styled("团队: ", muted()),
             Span::styled(
@@ -173,23 +178,32 @@ fn secret_detail_panel(app: &App) -> Paragraph<'_> {
             ),
         ]));
         lines.push(Line::from(format!("英文名: {}", team.team_name)));
-        lines.push(Line::from(format!(
-            "状态: {}",
-            if app.unlocked.contains_key(&team.team_name) {
-                "已解锁"
-            } else {
-                "未解锁"
-            }
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("状态: ", muted()),
+            Span::styled(
+                if unlocked { "已解锁" } else { "未解锁" },
+                if unlocked {
+                    success_style().add_modifier(Modifier::BOLD)
+                } else {
+                    danger_style().add_modifier(Modifier::BOLD)
+                },
+            ),
+        ]));
         lines.push(Line::from(""));
         if let Some(key) = app.selected_key() {
             lines.push(Line::from(vec![
                 Span::styled("当前 Key: ", muted()),
-                Span::styled(key, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    key,
+                    primary_style().add_modifier(Modifier::BOLD),
+                ),
             ]));
-            lines.push(Line::from("按 Enter 查看 value。"));
+            lines.push(Line::from(Span::styled(
+                "当前 key 已选中，可直接查看 value。",
+                accent_style(),
+            )));
         } else {
-            lines.push(Line::from("还没有选中的 key。"));
+            lines.push(Line::from(Span::styled("还没有可用的 key。", accent_style())));
         }
     } else {
         lines.push(Line::from("没有可用团队"));
@@ -419,13 +433,13 @@ fn danger_style() -> Style {
 fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
     match &app.page {
         Page::TeamList => {
-            if app.selected_team().is_none() {
+            if app.is_add_team_selected() || app.selected_team().is_none() {
                 vec![action_line("c", "创建团队", primary_style())]
             } else if let Some(team) = app.selected_team() {
                 if !app.unlocked.contains_key(&team.team_name) {
                     vec![action_line("u", "先解锁当前团队", primary_style())]
                 } else {
-                    vec![action_line("Enter", "进入当前团队", primary_style())]
+                    vec![action_line("s", "同步全部团队", primary_style())]
                 }
             } else {
                 Vec::new()
@@ -439,8 +453,8 @@ fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
                     vec![action_line("a", "新增第一个 key", primary_style())]
                 } else {
                     vec![
-                        action_line("Enter", "查看当前 value", primary_style()),
-                        action_line("e", "更新当前 key", accent_style()),
+                        action_line("e", "更新当前 key", primary_style()),
+                        action_line("s", "同步当前团队", accent_style()),
                     ]
                 }
             } else {
@@ -456,7 +470,7 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("c", "创建团队", primary_style()),
             action_line("u", "解锁团队", accent_style()),
             action_line("r", "设置/清空 remote", accent_style()),
-            action_line("s", "同步当前团队", success_style()),
+            action_line("s", "同步全部团队", success_style()),
             action_line("x", "删除当前团队", danger_style()),
             action_line("h", "帮助", muted()),
             action_line("q", "退出", muted()),
@@ -465,6 +479,7 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("a", "新增 key", primary_style()),
             action_line("e", "更新 key", accent_style()),
             action_line("d", "删除当前 key", danger_style()),
+            action_line("s", "同步当前团队", success_style()),
             action_line("u", "解锁当前团队", accent_style()),
             action_line("h", "帮助", muted()),
             action_line("q", "退出", muted()),

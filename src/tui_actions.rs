@@ -202,6 +202,33 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn sync_all_teams(&mut self) -> Result<()> {
+        if self.teams.is_empty() {
+            self.status = "没有可同步的团队".to_string();
+            return Ok(());
+        }
+
+        let locked = self
+            .teams
+            .iter()
+            .filter(|team| !self.unlocked.contains_key(&team.team_name))
+            .map(|team| team.team_name.clone())
+            .collect::<Vec<_>>();
+        if !locked.is_empty() {
+            self.status = format!("错误: 请先解锁全部团队: {}", locked.join(", "));
+            return Ok(());
+        }
+
+        for team in &self.teams {
+            if let Some(access) = self.unlocked.get(&team.team_name).cloned() {
+                tui_ops::sync_team(&self.paths, &access)?;
+            }
+        }
+        self.reload_teams()?;
+        self.status = format!("已同步全部团队: {}", self.teams.len());
+        Ok(())
+    }
+
     pub(crate) fn submit_form(&mut self) -> Result<()> {
         let Dialog::Form(mut dialog) = std::mem::replace(&mut self.dialog, Dialog::None) else {
             return Ok(());

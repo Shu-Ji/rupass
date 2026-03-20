@@ -64,7 +64,7 @@ impl App {
             team_index: 0,
             page: Page::TeamList,
             dialog: Dialog::None,
-            status: "Enter 进入团队 · c 创建团队 · u 解锁团队 · r 设置remote · s 同步 · x 删除团队 · h 帮助".to_string(),
+            status: "先选择一个团队，或创建新团队。".to_string(),
         };
         app.reload_teams()?;
         Ok(app)
@@ -102,6 +102,10 @@ impl App {
             .and_then(|team| self.unlocked.get(&team.team_name))
     }
 
+    pub(crate) fn is_add_team_selected(&self) -> bool {
+        matches!(self.page, Page::TeamList) && self.team_index >= self.teams.len()
+    }
+
     pub(crate) fn selected_key(&self) -> Option<&str> {
         let Page::TeamDetail { key_index, .. } = self.page else {
             return None;
@@ -136,7 +140,7 @@ impl App {
             KeyCode::Char('c') => self.open_create_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Char('r') => self.open_set_remote(),
-            KeyCode::Char('s') => self.sync_current_team()?,
+            KeyCode::Char('s') => self.sync_all_teams()?,
             KeyCode::Char('x') => self.open_delete_team(),
             _ => {}
         }
@@ -151,6 +155,7 @@ impl App {
             KeyCode::Char('a') => self.open_add_secret(),
             KeyCode::Char('e') => self.open_edit_secret()?,
             KeyCode::Char('d') => self.open_delete_key(),
+            KeyCode::Char('s') => self.sync_current_team()?,
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Esc => self.back_to_team_list(),
             _ => {}
@@ -215,21 +220,20 @@ impl App {
             self.open_create_team();
             return;
         };
+        let team_name = team.team_name.clone();
+        let display_name = team.display_name.clone();
         self.page = Page::TeamDetail {
-            team_name: team.team_name.clone(),
+            team_name,
             key_index: 0,
         };
         let _ = self.reload_keys();
-        self.status =
-            "Enter 查看value · a 新增key · e 更新key · d 删除key · u 解锁 · Esc 返回 · h 帮助"
-                .to_string();
+        self.status = format!("已进入团队: {display_name}");
     }
 
     fn back_to_team_list(&mut self) {
         self.page = Page::TeamList;
         self.keys.clear();
-        self.status = "Enter 进入团队 · c 创建团队 · u 解锁团队 · r 设置remote · s 同步 · x 删除团队 · h 帮助"
-            .to_string();
+        self.status = "已返回团队列表。".to_string();
     }
 
     pub(crate) fn reload_teams(&mut self) -> Result<()> {

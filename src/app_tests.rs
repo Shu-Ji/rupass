@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
+use crate::storage::save_team_config;
 
 fn test_paths() -> AppPaths {
     let suffix = SystemTime::now()
@@ -32,7 +33,6 @@ fn infers_team_when_only_one_exists() {
     let team = resolve_target_team(&paths, None).unwrap();
 
     assert_eq!(team.name, "dev_team");
-    assert!(team.access.is_none());
 }
 
 #[test]
@@ -51,40 +51,13 @@ fn requires_team_when_multiple_exist() {
 }
 
 #[test]
-fn falls_back_to_default_team_when_none_exists() {
+fn errors_when_no_team_exists() {
     let paths = test_paths();
     paths.ensure_base_dirs().unwrap();
 
-    let team = resolve_target_team_with(&paths, None, |_| {
-        Ok(ResolvedTeam {
-            name: DEFAULT_TEAM_NAME.to_string(),
-            access: None,
-        })
-    })
-    .unwrap();
+    let err = resolve_target_team(&paths, None).unwrap_err();
 
-    assert_eq!(team.name, DEFAULT_TEAM_NAME);
-}
-
-#[test]
-fn default_team_creation_reuses_current_auth() {
-    let paths = test_paths();
-    paths.ensure_base_dirs().unwrap();
-
-    let team = resolve_target_team_with(&paths, None, |_| {
-        Ok(ResolvedTeam {
-            name: DEFAULT_TEAM_NAME.to_string(),
-            access: Some(TeamAccess {
-                config: test_config(DEFAULT_TEAM_NAME),
-                cipher_key: [5_u8; 32],
-            }),
-        })
-    })
-    .unwrap();
-
-    let (_, cipher_key) = require_team_access(&paths, &team).unwrap();
-
-    assert_eq!(cipher_key, [5_u8; 32]);
+    assert!(err.to_string().contains("no team initialized"));
 }
 
 #[test]
@@ -136,32 +109,4 @@ fn authenticate_requires_valid_password() {
         err.to_string()
             .contains("invalid password for team: dev_team")
     );
-}
-
-#[test]
-fn delete_team_removes_config_and_store() {
-    let paths = test_paths();
-    paths.ensure_base_dirs().unwrap();
-    let salt = [3_u8; 16];
-    let key = derive_key("secret", &salt).unwrap();
-    save_team_config(
-        &paths,
-        &TeamConfig {
-            team_name: "dev_team".to_string(),
-            display_name: "dev_team".to_string(),
-            salt: STANDARD.encode(salt),
-            password_verifier: STANDARD.encode(password_verifier(&key)),
-            cipher_key: Some(STANDARD.encode(key)),
-            git_remote: None,
-        },
-    )
-    .unwrap();
-    fs::create_dir_all(paths.team_store_dir("dev_team")).unwrap();
-
-    let config_path = paths.config_path("dev_team");
-    let store_dir = paths.team_store_dir("dev_team");
-    delete_team_with_password(&paths, "dev_team", "secret").unwrap();
-
-    assert!(!config_path.exists());
-    assert!(!store_dir.exists());
 }
