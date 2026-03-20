@@ -1,0 +1,119 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary_name: rupass
+            asset_name: rupass-x86_64-unknown-linux-musl
+            build_mode: native
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: rupass.exe
+            asset_name: rupass-x86_64-pc-windows-msvc.exe
+            build_mode: native
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            binary_name: rupass.exe
+            asset_name: rupass-i686-pc-windows-msvc.exe
+            build_mode: native
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            binary_name: rupass.exe
+            asset_name: rupass-aarch64-pc-windows-msvc.exe
+            build_mode: native
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binary_name: rupass
+            asset_name: rupass-x86_64-apple-darwin
+            build_mode: native
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary_name: rupass
+            asset_name: rupass-aarch64-apple-darwin
+            build_mode: native
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            binary_name: rupass
+            asset_name: rupass-aarch64-unknown-linux-musl
+            build_mode: cross
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
+            binary_name: rupass
+            asset_name: rupass-armv7-unknown-linux-musleabihf
+            build_mode: cross
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build release binary
+        if: matrix.build_mode == 'native'
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build cross release binary
+        if: matrix.build_mode == 'cross'
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --locked
+          strip: true
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.asset_name }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: rupass-*
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
