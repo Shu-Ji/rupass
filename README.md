@@ -37,7 +37,3 @@ pnpm test
 pnpm fmt
 pnpm clippy
 ```
-
-
-我同意，当前这版纯手写单页不适合继续补了。现在我改方向：上 React + TypeScript + Ant Design + Tailwind + Lucide + Rsbuild，把
-  UI 拆成真正的团队管理台，再把前端编译产物内嵌进 Rust 一起发布。

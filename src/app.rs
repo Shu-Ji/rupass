@@ -38,7 +38,6 @@ pub(crate) fn dispatch(cli: ParsedCli) -> Result<()> {
                 &args.team,
                 args.display_name.as_deref().unwrap_or(&args.team),
             ),
-            Commands::Ui => crate::ui::run(paths),
             Commands::SyncAll => sync_all_teams(&paths),
             Commands::Team { command } => match command {
                 TeamCommands::List => list_teams(&paths),
