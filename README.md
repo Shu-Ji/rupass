@@ -37,16 +37,3 @@ pnpm test
 pnpm fmt
 pnpm clippy
 ```
-
-## 发布产物命名
-
-发布包现在统一为：
-
-```text
-rupass-{os}-{arch}-{version}.{bin|exe}
-```
-
-- `os`：`windows` / `macos` / `linux`
-- `arch`：`x64` / `x86` / `arm64` / `armv7`
-- `version`：发布 tag，比如 `v1.0.2`
-- Windows 使用 `.exe`，macOS / Linux 使用 `.bin`
