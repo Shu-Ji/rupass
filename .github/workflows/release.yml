@@ -14,54 +14,73 @@ env:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
             binary_name: rupass
-            asset_name: rupass-x86_64-unknown-linux-musl
+            asset_stem: rupass-linux-x64
+            asset_ext: .bin
             build_mode: native
-          - os: windows-latest
+          - runner: windows-latest
             target: x86_64-pc-windows-msvc
             binary_name: rupass.exe
-            asset_name: rupass-x86_64-pc-windows-msvc.exe
+            asset_stem: rupass-windows-x64
+            asset_ext: .exe
             build_mode: native
-          - os: windows-latest
+          - runner: windows-latest
             target: i686-pc-windows-msvc
             binary_name: rupass.exe
-            asset_name: rupass-i686-pc-windows-msvc.exe
+            asset_stem: rupass-windows-x86
+            asset_ext: .exe
             build_mode: native
-          - os: windows-latest
+          - runner: windows-latest
             target: aarch64-pc-windows-msvc
             binary_name: rupass.exe
-            asset_name: rupass-aarch64-pc-windows-msvc.exe
+            asset_stem: rupass-windows-arm64
+            asset_ext: .exe
             build_mode: native
-          - os: macos-15-intel
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
             binary_name: rupass
-            asset_name: rupass-x86_64-apple-darwin
+            asset_stem: rupass-macos-x64
+            asset_ext: .bin
             build_mode: native
-          - os: macos-15
+          - runner: macos-15
             target: aarch64-apple-darwin
             binary_name: rupass
-            asset_name: rupass-aarch64-apple-darwin
+            asset_stem: rupass-macos-arm64
+            asset_ext: .bin
             build_mode: native
-          - os: ubuntu-latest
+          - runner: ubuntu-latest
             target: aarch64-unknown-linux-musl
             binary_name: rupass
-            asset_name: rupass-aarch64-unknown-linux-musl
+            asset_stem: rupass-linux-arm64
+            asset_ext: .bin
             build_mode: cross
-          - os: ubuntu-latest
+          - runner: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
             binary_name: rupass
-            asset_name: rupass-armv7-unknown-linux-musleabihf
+            asset_stem: rupass-linux-armv7
+            asset_ext: .bin
             build_mode: cross
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -89,14 +108,15 @@ jobs:
       - name: Stage artifact
         shell: bash
         run: |
+          rm -rf dist
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.asset_name }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.asset_stem }}-${{ steps.version.outputs.value }}${{ matrix.asset_ext }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}
+          name: ${{ matrix.asset_stem }}-${{ steps.version.outputs.value }}${{ matrix.asset_ext }}
+          path: dist/${{ matrix.asset_stem }}-${{ steps.version.outputs.value }}${{ matrix.asset_ext }}
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -112,6 +132,12 @@ jobs:
           path: dist
           pattern: rupass-*
           merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
