@@ -16,11 +16,6 @@ impl App {
                     secret: false,
                 },
                 InputField {
-                    label: "显示名",
-                    value: String::new(),
-                    secret: false,
-                },
-                InputField {
                     label: "密码",
                     value: String::new(),
                     secret: true,
@@ -236,13 +231,11 @@ impl App {
         let result: Result<()> = match &dialog.kind {
             FormKind::CreateTeam => {
                 let team = dialog.fields[0].value.trim();
-                let display_name = dialog.fields[1].value.trim();
                 let access = tui_ops::create_team(
                     &self.paths,
                     team,
-                    (!display_name.is_empty()).then_some(display_name),
+                    &dialog.fields[1].value,
                     &dialog.fields[2].value,
-                    &dialog.fields[3].value,
                 )?;
                 self.unlocked.insert(team.to_string(), access);
                 self.reload_teams()?;

@@ -221,13 +221,12 @@ impl App {
             return;
         };
         let team_name = team.team_name.clone();
-        let display_name = team.display_name.clone();
         self.page = Page::TeamDetail {
-            team_name,
+            team_name: team_name.clone(),
             key_index: 0,
         };
         let _ = self.reload_keys();
-        self.status = format!("已进入团队: {display_name}");
+        self.status = format!("已进入团队: {team_name}");
     }
 
     fn back_to_team_list(&mut self) {

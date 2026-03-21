@@ -16,7 +16,6 @@ fn test_paths() -> AppPaths {
 fn test_config(team_name: &str) -> TeamConfig {
     TeamConfig {
         team_name: team_name.to_string(),
-        display_name: team_name.to_string(),
         salt: "salt".to_string(),
         password_verifier: "verifier".to_string(),
         cipher_key: None,
@@ -69,7 +68,6 @@ fn unlock_uses_stored_cipher_key_without_password() {
         &paths,
         &TeamConfig {
             team_name: "dev_team".to_string(),
-            display_name: "dev_team".to_string(),
             salt: "salt".to_string(),
             password_verifier: "verifier".to_string(),
             cipher_key: Some(STANDARD.encode(key)),
@@ -93,7 +91,6 @@ fn authenticate_requires_valid_password() {
         &paths,
         &TeamConfig {
             team_name: "dev_team".to_string(),
-            display_name: "dev_team".to_string(),
             salt: STANDARD.encode(salt),
             password_verifier: STANDARD.encode(password_verifier(&key)),
             cipher_key: Some(STANDARD.encode(key)),

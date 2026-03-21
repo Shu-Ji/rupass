@@ -89,13 +89,8 @@ fn team_list(app: &App) -> List<'_> {
             };
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    &team.display_name,
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(
                     &team.team_name,
-                    Style::default().fg(Color::Rgb(140, 154, 171)),
+                    Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  •  ", Style::default().fg(Color::Rgb(104, 117, 133))),
                 Span::styled(status_text, Style::default().fg(status_color)),
@@ -118,13 +113,12 @@ fn team_detail_panel(app: &App) -> Paragraph<'_> {
     if let Some(team) = app.selected_team() {
         let unlocked = app.unlocked.contains_key(&team.team_name);
         lines.push(Line::from(vec![
-            Span::styled("显示名: ", muted()),
+            Span::styled("团队名: ", muted()),
             Span::styled(
-                &team.display_name,
+                &team.team_name,
                 Style::default().add_modifier(Modifier::BOLD),
             ),
         ]));
-        lines.push(Line::from(format!("英文名: {}", team.team_name)));
         lines.push(Line::from(vec![
             Span::styled("状态: ", muted()),
             Span::styled(
@@ -177,11 +171,10 @@ fn secret_detail_panel(app: &App) -> Paragraph<'_> {
         lines.push(Line::from(vec![
             Span::styled("团队: ", muted()),
             Span::styled(
-                &team.display_name,
+                &team.team_name,
                 Style::default().add_modifier(Modifier::BOLD),
             ),
         ]));
-        lines.push(Line::from(format!("英文名: {}", team.team_name)));
         lines.push(Line::from(vec![
             Span::styled("状态: ", muted()),
             Span::styled(

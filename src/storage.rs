@@ -14,7 +14,6 @@ pub(crate) struct AppPaths {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TeamConfig {
     pub(crate) team_name: String,
-    pub(crate) display_name: String,
     pub(crate) salt: String,
     pub(crate) password_verifier: String,
     pub(crate) cipher_key: Option<String>,

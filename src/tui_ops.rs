@@ -20,7 +20,6 @@ pub(crate) struct TeamAccess {
 #[derive(Clone, Debug)]
 pub(crate) struct TeamSummary {
     pub(crate) team_name: String,
-    pub(crate) display_name: String,
     pub(crate) git_remote: Option<String>,
 }
 
@@ -29,7 +28,6 @@ pub(crate) fn list_teams(paths: &AppPaths) -> Result<Vec<TeamSummary>> {
         .into_iter()
         .map(|team| TeamSummary {
             team_name: team.team_name,
-            display_name: team.display_name,
             git_remote: team.git_remote,
         })
         .collect())
@@ -38,7 +36,6 @@ pub(crate) fn list_teams(paths: &AppPaths) -> Result<Vec<TeamSummary>> {
 pub(crate) fn create_team(
     paths: &AppPaths,
     team: &str,
-    display_name: Option<&str>,
     password: &str,
     password_confirm: &str,
 ) -> Result<TeamAccess> {
@@ -60,7 +57,6 @@ pub(crate) fn create_team(
     let key = derive_key(password, &salt)?;
     let config = TeamConfig {
         team_name: team.to_string(),
-        display_name: display_name.unwrap_or(team).to_string(),
         salt: STANDARD.encode(salt),
         password_verifier: STANDARD.encode(password_verifier(&key)),
         cipher_key: Some(STANDARD.encode(key)),
