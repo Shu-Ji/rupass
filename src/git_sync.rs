@@ -42,11 +42,13 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
     if config.git_remote.is_some() {
         let remote_has_main = remote_has_main_branch(repo_dir)?;
         if remote_has_main && has_local_commits(repo_dir)? {
-            run_git(repo_dir, &["pull", "--rebase", "origin", "main"])?;
+            if let Err(err) = run_git(repo_dir, &["pull", "--rebase", "origin", "main"]) {
+                bail!("{}", format_sync_error(repo_dir, &err.to_string()));
+            }
         }
 
-        if has_local_commits(repo_dir)? {
-            run_git(repo_dir, &["push", "-u", "origin", "main"])?;
+        if has_local_commits(repo_dir)? && let Err(err) = run_git(repo_dir, &["push", "-u", "origin", "main"]) {
+            bail!("{}", format_sync_error(repo_dir, &err.to_string()));
         }
     }
 
@@ -117,4 +119,80 @@ fn unix_timestamp() -> Result<u64> {
         .duration_since(UNIX_EPOCH)
         .context("system clock before unix epoch")?
         .as_secs())
+}
+
+fn format_sync_error(repo_dir: &Path, message: &str) -> String {
+    if is_rebase_conflict(message) {
+        let conflicts = conflict_paths(repo_dir).unwrap_or_default();
+        let conflict_hint = if conflicts.is_empty() {
+            "冲突文件请运行 `git status` 查看。".to_string()
+        } else {
+            format!("冲突文件: {}", conflicts.join(", "))
+        };
+        return format!(
+            "sync failed due to git conflict: {message}\n\
+             repo: {}\n\
+             {conflict_hint}\n\
+             处理建议:\n\
+             1. 进入该目录后运行 `git status`\n\
+             2. 解决冲突并 `git add <files>`\n\
+             3. 继续执行 `git rebase --continue`\n\
+             4. 如果想放弃这次同步，执行 `git rebase --abort`",
+            repo_dir.display()
+        );
+    }
+
+    format!("sync failed: {message}\nrepo: {}", repo_dir.display())
+}
+
+fn is_rebase_conflict(message: &str) -> bool {
+    message.contains("could not apply")
+        || message.contains("has conflicts")
+        || message.contains("Merge conflict")
+        || message.contains("CONFLICT")
+}
+
+fn conflict_paths(repo_dir: &Path) -> Result<Vec<String>> {
+    Ok(parse_conflict_paths(&run_git(repo_dir, &["status", "--porcelain"])?))
+}
+
+fn parse_conflict_paths(status: &str) -> Vec<String> {
+    status
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let code = &line[..2];
+            let is_conflict = matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU");
+            if !is_conflict {
+                return None;
+            }
+            Some(line[3..].trim().to_string())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_conflict_paths_from_git_status() {
+        let status = "\
+UU store/a.json\n\
+M  store/b.json\n\
+AA store/c.json\n";
+        assert_eq!(
+            parse_conflict_paths(status),
+            vec!["store/a.json".to_string(), "store/c.json".to_string()]
+        );
+    }
+
+    #[test]
+    fn detects_rebase_conflict_messages() {
+        assert!(is_rebase_conflict("git pull failed: CONFLICT (content): Merge conflict in a"));
+        assert!(is_rebase_conflict("could not apply 1234567"));
+        assert!(!is_rebase_conflict("authentication failed"));
+    }
 }
