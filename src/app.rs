@@ -1,9 +1,7 @@
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use crate::cli::{
-    Commands, KeyCommands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands,
-};
+use crate::cli::{Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands};
 use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
 use crate::git_sync::sync_team_repo;
 use crate::storage::{
@@ -31,12 +29,20 @@ pub(crate) fn dispatch(cli: ParsedCli) -> Result<()> {
             Commands::Tui => crate::tui::run(paths),
             Commands::SyncAll => sync_all_teams(&paths),
             Commands::Team { command } => dispatch_team_command(&paths, command),
-            Commands::Key { command } => dispatch_key_command(&paths, command),
         },
         ParsedCli::TeamScoped(cli) => {
             let team = resolve_target_team(&paths, cli.team.as_deref())?;
             match cli.command {
-                TeamScopedCommands::Get(args) => get_secret(&paths, &team, &args.key, None),
+                TeamScopedCommands::List(args) => list_keys(&paths, &team, args.password.as_deref()),
+                TeamScopedCommands::Get(args) => {
+                    get_secret(&paths, &team, &args.key, args.password.as_deref())
+                }
+                TeamScopedCommands::Set(args) => {
+                    set_secret(&paths, &team, &args.key, &args.value, args.password.as_deref())
+                }
+                TeamScopedCommands::Del(args) => {
+                    delete_secret(&paths, &team, &args.key, args.password.as_deref())
+                }
             }
         }
     }
@@ -46,28 +52,10 @@ fn dispatch_team_command(paths: &AppPaths, command: TeamCommands) -> Result<()> 
     match command {
         TeamCommands::List => list_teams(paths),
         TeamCommands::Create(args) => create_team(paths, args),
-        TeamCommands::Delete(args) => delete_team(paths, &args.team, args.password.as_deref()),
+        TeamCommands::Del(args) => delete_team(paths, &args.team, args.password.as_deref()),
         TeamCommands::SetRemote(args) => set_team_remote(paths, &args.team, &args.url, args.password.as_deref()),
         TeamCommands::ClearRemote(args) => clear_team_remote(paths, &args.team, args.password.as_deref()),
         TeamCommands::Sync(args) => sync_team(paths, &args.team, args.password.as_deref()),
-    }
-}
-
-fn dispatch_key_command(paths: &AppPaths, command: KeyCommands) -> Result<()> {
-    match command {
-        KeyCommands::List(args) => list_keys(paths, args.team.as_deref(), args.password.as_deref()),
-        KeyCommands::Get(args) => {
-            let team = resolve_target_team(paths, args.team.as_deref())?;
-            get_secret(paths, &team, &args.key, args.password.as_deref())
-        }
-        KeyCommands::Set(args) => {
-            let team = resolve_target_team(paths, args.team.as_deref())?;
-            set_secret(paths, &team, &args.key, &args.value, args.password.as_deref())
-        }
-        KeyCommands::Delete(args) => {
-            let team = resolve_target_team(paths, args.team.as_deref())?;
-            delete_secret(paths, &team, &args.key, args.password.as_deref())
-        }
     }
 }
 
@@ -192,8 +180,7 @@ fn sync_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()>
     Ok(())
 }
 
-fn list_keys(paths: &AppPaths, explicit_team: Option<&str>, password: Option<&str>) -> Result<()> {
-    let team = resolve_target_team(paths, explicit_team)?;
+fn list_keys(paths: &AppPaths, team: &ResolvedTeam, password: Option<&str>) -> Result<()> {
     let access = tui_ops::open_team(paths, &team.name, password)?;
     let keys = tui_ops::list_keys(paths, &access)?;
     for key in keys {

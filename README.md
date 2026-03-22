@@ -46,8 +46,8 @@ pnpm clippy
 # 通用命令
 rupass tui
 rupass team list
-rupass team create dev_team --password secret
-rupass team set-remote dev_team git@github.com:org/repo.git
+rupass team create my_team --password secret
+rupass team set-remote my_team git@github.com:org/repo.git
 rupass sync-all
 ```
 
@@ -56,11 +56,10 @@ rupass sync-all
 仅当本地只有一个团队时可省略团队名：
 
 ```bash
+rupass list
 rupass get db_password
-rupass key list
-rupass key get db_password
-rupass key set db_password 'hello123'
-rupass key delete db_password
+rupass set db_password 'hello123'
+rupass del db_password
 ```
 
 ### 传递团队示例
@@ -68,14 +67,13 @@ rupass key delete db_password
 显式传入团队名：
 
 ```bash
-rupass this_is_a_test_team get db_password
-rupass key list --team this_is_a_test_team
-rupass key get --team this_is_a_test_team db_password
-rupass key set --team this_is_a_test_team db_password 'hello123'
-rupass key delete --team this_is_a_test_team db_password
-rupass team delete this_is_a_test_team --password secret
-rupass team clear-remote this_is_a_test_team --password secret
-rupass team sync this_is_a_test_team --password secret
+rupass my_team list
+rupass my_team get db_password
+rupass my_team set db_password 'hello123'
+rupass my_team del db_password
+rupass team del my_team --password secret
+rupass team clear-remote my_team --password secret
+rupass team sync my_team --password secret
 ```
 
 ## 安装 release
