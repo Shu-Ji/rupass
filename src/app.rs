@@ -1,12 +1,15 @@
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use crate::cli::{Commands, ParsedCli, TeamScopedCommands};
+use crate::cli::{
+    Commands, KeyCommands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands,
+};
 use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
 use crate::git_sync::sync_team_repo;
 use crate::storage::{
     AppPaths, SecretRecord, TeamConfig, list_team_configs, load_secret_record, load_team_config,
 };
+use crate::tui_ops;
 
 #[derive(Debug)]
 struct TeamAccess {
@@ -27,12 +30,43 @@ pub(crate) fn dispatch(cli: ParsedCli) -> Result<()> {
         ParsedCli::Standard(cli) => match cli.command {
             Commands::Tui => crate::tui::run(paths),
             Commands::SyncAll => sync_all_teams(&paths),
+            Commands::Team { command } => dispatch_team_command(&paths, command),
+            Commands::Key { command } => dispatch_key_command(&paths, command),
         },
         ParsedCli::TeamScoped(cli) => {
             let team = resolve_target_team(&paths, cli.team.as_deref())?;
             match cli.command {
-                TeamScopedCommands::Get(args) => get_secret(&paths, &team, &args.key),
+                TeamScopedCommands::Get(args) => get_secret(&paths, &team, &args.key, None),
             }
+        }
+    }
+}
+
+fn dispatch_team_command(paths: &AppPaths, command: TeamCommands) -> Result<()> {
+    match command {
+        TeamCommands::List => list_teams(paths),
+        TeamCommands::Create(args) => create_team(paths, args),
+        TeamCommands::Delete(args) => delete_team(paths, &args.team, args.password.as_deref()),
+        TeamCommands::SetRemote(args) => set_team_remote(paths, &args.team, &args.url, args.password.as_deref()),
+        TeamCommands::ClearRemote(args) => clear_team_remote(paths, &args.team, args.password.as_deref()),
+        TeamCommands::Sync(args) => sync_team(paths, &args.team, args.password.as_deref()),
+    }
+}
+
+fn dispatch_key_command(paths: &AppPaths, command: KeyCommands) -> Result<()> {
+    match command {
+        KeyCommands::List(args) => list_keys(paths, args.team.as_deref(), args.password.as_deref()),
+        KeyCommands::Get(args) => {
+            let team = resolve_target_team(paths, args.team.as_deref())?;
+            get_secret(paths, &team, &args.key, args.password.as_deref())
+        }
+        KeyCommands::Set(args) => {
+            let team = resolve_target_team(paths, args.team.as_deref())?;
+            set_secret(paths, &team, &args.key, &args.value, args.password.as_deref())
+        }
+        KeyCommands::Delete(args) => {
+            let team = resolve_target_team(paths, args.team.as_deref())?;
+            delete_secret(paths, &team, &args.key, args.password.as_deref())
         }
     }
 }
@@ -103,14 +137,108 @@ fn sync_all_teams(paths: &AppPaths) -> Result<()> {
     Ok(())
 }
 
-fn get_secret(paths: &AppPaths, team: &ResolvedTeam, key: &str) -> Result<()> {
-    let (_, cipher_key) = load_team_for_get(paths, &team.name)?;
+fn list_teams(paths: &AppPaths) -> Result<()> {
+    let teams = list_team_configs(paths)?;
+    if teams.is_empty() {
+        println!("no teams");
+        return Ok(());
+    }
+
+    for team in teams {
+        println!(
+            "{}\t{}",
+            team.team_name,
+            team.git_remote.as_deref().unwrap_or("-")
+        );
+    }
+    Ok(())
+}
+
+fn create_team(paths: &AppPaths, args: TeamCreateArgs) -> Result<()> {
+    let (password, password_confirm) = resolve_create_passwords(&args)?;
+    tui_ops::create_team(paths, &args.team, &password, &password_confirm)?;
+    println!("created team: {}", args.team);
+    Ok(())
+}
+
+fn delete_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
+    let password = resolve_existing_password(team, password)?;
+    tui_ops::delete_team(paths, team, &password)?;
+    println!("deleted team: {team}");
+    Ok(())
+}
+
+fn set_team_remote(paths: &AppPaths, team: &str, url: &str, password: Option<&str>) -> Result<()> {
+    let access = tui_ops::open_team(paths, team, password)?;
+    tui_ops::set_remote(paths, &access, url)?;
+    println!("updated remote: {team}\t{url}");
+    Ok(())
+}
+
+fn clear_team_remote(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
+    let access = tui_ops::open_team(paths, team, password)?;
+    tui_ops::set_remote(paths, &access, "")?;
+    println!("cleared remote: {team}");
+    Ok(())
+}
+
+fn sync_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
+    let access = tui_ops::open_team(paths, team, password)?;
+    if access.config.git_remote.is_none() {
+        bail!("team has no remote configured: {team}");
+    }
+    tui_ops::sync_team(paths, &access)?;
+    println!("synced team: {team}");
+    Ok(())
+}
+
+fn list_keys(paths: &AppPaths, explicit_team: Option<&str>, password: Option<&str>) -> Result<()> {
+    let team = resolve_target_team(paths, explicit_team)?;
+    let access = tui_ops::open_team(paths, &team.name, password)?;
+    let keys = tui_ops::list_keys(paths, &access)?;
+    for key in keys {
+        println!("{key}");
+    }
+    Ok(())
+}
+
+fn get_secret(paths: &AppPaths, team: &ResolvedTeam, key: &str, password: Option<&str>) -> Result<()> {
+    let cipher_key = if let Some(password) = password {
+        tui_ops::open_team(paths, &team.name, Some(password))?.cipher_key
+    } else {
+        load_team_for_get(paths, &team.name)?.1
+    };
     let record = load_secret_record(paths, &team.name, key)?;
     verify_secret_key(&cipher_key, key, &record)?;
     println!(
         "{}",
         decrypt_text(&cipher_key, &record.encrypted_value, &record.value_nonce)?
     );
+    Ok(())
+}
+
+fn set_secret(
+    paths: &AppPaths,
+    team: &ResolvedTeam,
+    key: &str,
+    value: &str,
+    password: Option<&str>,
+) -> Result<()> {
+    let access = tui_ops::open_team(paths, &team.name, password)?;
+    tui_ops::set_secret(paths, &access, key, value)?;
+    println!("saved key: {key}");
+    Ok(())
+}
+
+fn delete_secret(
+    paths: &AppPaths,
+    team: &ResolvedTeam,
+    key: &str,
+    password: Option<&str>,
+) -> Result<()> {
+    let access = tui_ops::open_team(paths, &team.name, password)?;
+    tui_ops::delete_secret(paths, &access, key)?;
+    println!("deleted key: {key}");
     Ok(())
 }
 
@@ -166,6 +294,33 @@ fn migrate_team_cipher_key(
     let password = read_existing_password(team)?;
     let access = authenticate_team_with_password(paths, config, team, &password)?;
     Ok((access.config, access.cipher_key))
+}
+
+fn resolve_create_passwords(args: &TeamCreateArgs) -> Result<(String, String)> {
+    match (&args.password, &args.password_confirm) {
+        (Some(password), Some(confirm)) => Ok((password.clone(), confirm.clone())),
+        (Some(password), None) => Ok((password.clone(), password.clone())),
+        (None, Some(_)) => bail!("--password-confirm requires --password"),
+        (None, None) => {
+            let password =
+                rpassword::prompt_password(format!("password for {}: ", args.team))
+                    .context("failed to read password")?;
+            if password.is_empty() {
+                bail!("password cannot be empty");
+            }
+            let confirm =
+                rpassword::prompt_password(format!("confirm password for {}: ", args.team))
+                    .context("failed to read password confirmation")?;
+            Ok((password, confirm))
+        }
+    }
+}
+
+fn resolve_existing_password(team: &str, password: Option<&str>) -> Result<String> {
+    match password {
+        Some(password) => Ok(password.to_string()),
+        None => read_existing_password(team),
+    }
 }
 
 fn decode_cipher_key(team: &str, cipher_key: &str) -> Result<[u8; 32]> {

@@ -8,6 +8,8 @@
 rupass --help
 ```
 
+也支持完整 CLI，方便脚本或 AI 直接通过命令行操作。
+
 ## 规则
 
 - 团队名必须以 `_team` 结尾。
@@ -36,6 +38,34 @@ pnpm build
 pnpm test
 pnpm fmt
 pnpm clippy
+```
+
+## CLI 示例
+
+```bash
+# 列出团队
+rupass team list
+
+# 创建团队
+rupass team create dev_team --password secret
+
+# 设置远程
+rupass team set-remote dev_team git@github.com:org/repo.git
+
+# 同步单个团队
+rupass team sync dev_team
+
+# 列出 key
+rupass key list --team dev_team
+
+# 读取 key
+rupass key get --team dev_team db_password
+
+# 写入 key
+rupass key set --team dev_team db_password 'hello123'
+
+# 删除 key
+rupass key delete --team dev_team db_password
 ```
 
 ## 安装 release

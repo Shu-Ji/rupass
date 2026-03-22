@@ -25,8 +25,8 @@ pub(crate) struct TeamCommandInput {
     disable_help_subcommand = true,
     about = "轻量级团队密码管理工具",
     override_usage = "rupass <COMMAND>\n       rupass <team> get <key>",
-    long_about = "rupass 是一个轻量级团队密码管理工具。\n日常管理通过 TUI 完成，CLI 只保留读取和全量同步入口。",
-    after_help = "示例:\n  rupass tui\n  rupass sync-all\n  rupass get db_password\n  rupass this_is_a_test_team get db_password"
+    long_about = "rupass 是一个轻量级团队密码管理工具。\n支持 TUI 和完整 CLI，便于脚本或 AI 通过命令行管理团队、密钥与同步。",
+    after_help = "示例:\n  rupass tui\n  rupass team list\n  rupass team create dev_team --password secret\n  rupass key set --team dev_team db_password hello123\n  rupass get db_password\n  rupass this_is_a_test_team get db_password"
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -47,6 +47,120 @@ pub(crate) enum Commands {
         after_help = "示例:\n  rupass sync-all"
     )]
     SyncAll,
+    #[command(
+        name = "team",
+        about = "团队管理命令",
+        after_help = "示例:\n  rupass team list\n  rupass team create dev_team --password secret\n  rupass team set-remote dev_team git@github.com:org/repo.git"
+    )]
+    Team {
+        #[command(subcommand)]
+        command: TeamCommands,
+    },
+    #[command(
+        name = "key",
+        about = "密钥管理命令",
+        after_help = "示例:\n  rupass key list --team dev_team\n  rupass key get --team dev_team db_password\n  rupass key set --team dev_team db_password hello123"
+    )]
+    Key {
+        #[command(subcommand)]
+        command: KeyCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum TeamCommands {
+    #[command(about = "列出所有团队")]
+    List,
+    #[command(about = "创建团队")]
+    Create(TeamCreateArgs),
+    #[command(about = "删除团队")]
+    Delete(TeamPasswordTargetArgs),
+    #[command(about = "设置团队远程仓库")]
+    SetRemote(TeamSetRemoteArgs),
+    #[command(about = "清空团队远程仓库")]
+    ClearRemote(TeamPasswordTargetArgs),
+    #[command(about = "同步指定团队")]
+    Sync(TeamPasswordTargetArgs),
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum KeyCommands {
+    #[command(about = "列出团队下所有 key")]
+    List(KeyListArgs),
+    #[command(about = "读取 key 的值")]
+    Get(KeyGetArgs),
+    #[command(about = "设置 key 的值")]
+    Set(KeySetArgs),
+    #[command(about = "删除 key")]
+    Delete(KeyDeleteArgs),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamCreateArgs {
+    #[arg(help = "团队英文名，必须以 _team 结尾")]
+    pub(crate) team: String,
+    #[arg(long, help = "团队密码；不传则交互输入")]
+    pub(crate) password: Option<String>,
+    #[arg(long = "password-confirm", help = "确认密码；不传则默认与 --password 相同，或交互输入")]
+    pub(crate) password_confirm: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamPasswordTargetArgs {
+    #[arg(help = "团队英文名，必须以 _team 结尾")]
+    pub(crate) team: String,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamSetRemoteArgs {
+    #[arg(help = "团队英文名，必须以 _team 结尾")]
+    pub(crate) team: String,
+    #[arg(help = "远程仓库地址")]
+    pub(crate) url: String,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct KeyListArgs {
+    #[arg(long, short, help = "团队英文名；不传时会自动推断默认团队")]
+    pub(crate) team: Option<String>,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct KeyGetArgs {
+    #[arg(help = "要读取的 key 名称")]
+    pub(crate) key: String,
+    #[arg(long, short, help = "团队英文名；不传时会自动推断默认团队")]
+    pub(crate) team: Option<String>,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct KeySetArgs {
+    #[arg(help = "要设置的 key 名称")]
+    pub(crate) key: String,
+    #[arg(help = "要写入的 value")]
+    pub(crate) value: String,
+    #[arg(long, short, help = "团队英文名；不传时会自动推断默认团队")]
+    pub(crate) team: Option<String>,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct KeyDeleteArgs {
+    #[arg(help = "要删除的 key 名称")]
+    pub(crate) key: String,
+    #[arg(long, short, help = "团队英文名；不传时会自动推断默认团队")]
+    pub(crate) team: Option<String>,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -174,6 +288,52 @@ mod tests {
         match cli {
             ParsedCli::Standard(cli) => match cli.command {
                 Commands::SyncAll => {}
+                command => panic!("unexpected command: {command:?}"),
+            },
+            other => panic!("unexpected cli: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_team_create_command() {
+        let cli = parse_from(["rupass", "team", "create", "dev_team", "--password", "secret"]).unwrap();
+        match cli {
+            ParsedCli::Standard(cli) => match cli.command {
+                Commands::Team { command } => match command {
+                    TeamCommands::Create(args) => {
+                        assert_eq!(args.team, "dev_team");
+                        assert_eq!(args.password.as_deref(), Some("secret"));
+                    }
+                    other => panic!("unexpected team command: {other:?}"),
+                },
+                command => panic!("unexpected command: {command:?}"),
+            },
+            other => panic!("unexpected cli: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_key_set_command() {
+        let cli = parse_from([
+            "rupass",
+            "key",
+            "set",
+            "db_password",
+            "hello123",
+            "--team",
+            "dev_team",
+        ])
+        .unwrap();
+        match cli {
+            ParsedCli::Standard(cli) => match cli.command {
+                Commands::Key { command } => match command {
+                    KeyCommands::Set(args) => {
+                        assert_eq!(args.key, "db_password");
+                        assert_eq!(args.value, "hello123");
+                        assert_eq!(args.team.as_deref(), Some("dev_team"));
+                    }
+                    other => panic!("unexpected key command: {other:?}"),
+                },
                 command => panic!("unexpected command: {command:?}"),
             },
             other => panic!("unexpected cli: {other:?}"),

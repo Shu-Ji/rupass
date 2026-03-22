@@ -3,7 +3,9 @@ use std::fs;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use crate::crypto::{decrypt_text, derive_key, encrypt_text, password_verifier, random_bytes};
+use crate::crypto::{
+    decrypt_text, derive_key, encrypt_text, password_verifier, random_bytes, read_existing_password,
+};
 use crate::git_sync::{ensure_git_repo, sync_team_repo};
 use crate::storage::{
     AppPaths, SecretRecord, TeamConfig, delete_secret_record, list_secret_records,
@@ -73,6 +75,28 @@ pub(crate) fn create_team(
 pub(crate) fn unlock_team(paths: &AppPaths, team: &str, password: &str) -> Result<TeamAccess> {
     let config = load_team_config(paths, team)?;
     authenticate_team(paths, config, team, password)
+}
+
+pub(crate) fn open_team(
+    paths: &AppPaths,
+    team: &str,
+    password: Option<&str>,
+) -> Result<TeamAccess> {
+    let config = load_team_config(paths, team)?;
+
+    if let Some(password) = password {
+        return authenticate_team(paths, config, team, password);
+    }
+
+    if let Some(cipher_key) = config.cipher_key.clone() {
+        return Ok(TeamAccess {
+            config,
+            cipher_key: decode_cipher_key(team, &cipher_key)?,
+        });
+    }
+
+    let password = read_existing_password(team)?;
+    authenticate_team(paths, config, team, &password)
 }
 
 pub(crate) fn list_keys(paths: &AppPaths, access: &TeamAccess) -> Result<Vec<String>> {
