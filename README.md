@@ -43,29 +43,39 @@ pnpm clippy
 ## CLI 示例
 
 ```bash
-# 列出团队
+# 通用命令
+rupass tui
 rupass team list
-
-# 创建团队
 rupass team create dev_team --password secret
-
-# 设置远程
 rupass team set-remote dev_team git@github.com:org/repo.git
+rupass sync-all
+```
 
-# 同步单个团队
-rupass team sync dev_team
+### 默认团队示例
 
-# 列出 key
-rupass key list --team dev_team
+仅当本地只有一个团队时可省略团队名：
 
-# 读取 key
-rupass key get --team dev_team db_password
+```bash
+rupass get db_password
+rupass key list
+rupass key get db_password
+rupass key set db_password 'hello123'
+rupass key delete db_password
+```
 
-# 写入 key
-rupass key set --team dev_team db_password 'hello123'
+### 传递团队示例
 
-# 删除 key
-rupass key delete --team dev_team db_password
+显式传入团队名：
+
+```bash
+rupass this_is_a_test_team get db_password
+rupass key list --team this_is_a_test_team
+rupass key get --team this_is_a_test_team db_password
+rupass key set --team this_is_a_test_team db_password 'hello123'
+rupass key delete --team this_is_a_test_team db_password
+rupass team delete this_is_a_test_team --password secret
+rupass team clear-remote this_is_a_test_team --password secret
+rupass team sync this_is_a_test_team --password secret
 ```
 
 ## 安装 release

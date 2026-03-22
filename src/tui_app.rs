@@ -301,6 +301,10 @@ impl App {
     }
 
     fn queue_sync_current_team(&mut self) {
+        if self.pending_action.is_some() {
+            self.status = "错误: 已有同步正在进行中，请等待完成".to_string();
+            return;
+        }
         let Some(access) = self.selected_access() else {
             self.status = "请先解锁团队，再执行同步".to_string();
             return;
@@ -318,6 +322,10 @@ impl App {
     }
 
     fn queue_sync_all_teams(&mut self) {
+        if self.pending_action.is_some() {
+            self.status = "错误: 已有同步正在进行中，请等待完成".to_string();
+            return;
+        }
         if self.teams.is_empty() {
             self.status = "没有可同步的团队".to_string();
             return;

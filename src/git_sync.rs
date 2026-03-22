@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,6 +21,7 @@ pub(crate) fn ensure_git_repo(repo_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
+    let _lock = acquire_sync_lock(repo_dir)?;
     ensure_git_repo(repo_dir)?;
 
     if let Some(remote) = &config.git_remote {
@@ -53,6 +56,17 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct SyncLock {
+    path: std::path::PathBuf,
+}
+
+impl Drop for SyncLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 fn ensure_git_remote(repo_dir: &Path, remote: &str) -> Result<()> {
@@ -121,6 +135,42 @@ fn unix_timestamp() -> Result<u64> {
         .as_secs())
 }
 
+fn acquire_sync_lock(repo_dir: &Path) -> Result<SyncLock> {
+    let lock_path = sync_lock_path(repo_dir)?;
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create sync lock dir {}", parent.display()))?;
+    }
+
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            let _ = writeln!(file, "pid={}", std::process::id());
+            Ok(SyncLock { path: lock_path })
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => bail!(
+            "another sync is already running\nrepo: {}\nlock: {}\n请等待当前同步完成后再试",
+            repo_dir.display(),
+            lock_path.display()
+        ),
+        Err(err) => Err(err)
+            .with_context(|| format!("failed to create sync lock {}", lock_path.display())),
+    }
+}
+
+fn sync_lock_path(repo_dir: &Path) -> Result<std::path::PathBuf> {
+    let Some(store_dir) = repo_dir.parent() else {
+        bail!("invalid repo dir: {}", repo_dir.display());
+    };
+    let Some(base_dir) = store_dir.parent() else {
+        bail!("invalid repo dir: {}", repo_dir.display());
+    };
+    Ok(base_dir.join(".sync.lock"))
+}
+
 fn format_sync_error(repo_dir: &Path, message: &str) -> String {
     if is_rebase_conflict(message) {
         let conflicts = conflict_paths(repo_dir).unwrap_or_default();
@@ -176,6 +226,7 @@ fn parse_conflict_paths(status: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parses_conflict_paths_from_git_status() {
@@ -194,5 +245,21 @@ AA store/c.json\n";
         assert!(is_rebase_conflict("git pull failed: CONFLICT (content): Merge conflict in a"));
         assert!(is_rebase_conflict("could not apply 1234567"));
         assert!(!is_rebase_conflict("authentication failed"));
+    }
+
+    #[test]
+    fn prevents_parallel_sync_with_lock_file() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("rupass-sync-lock-test-{suffix}"));
+        let repo_dir = base.join("store").join("dev_team");
+        fs::create_dir_all(&repo_dir).unwrap();
+
+        let _guard = acquire_sync_lock(&repo_dir).unwrap();
+        let err = acquire_sync_lock(&repo_dir).unwrap_err();
+
+        assert!(err.to_string().contains("another sync is already running"));
     }
 }

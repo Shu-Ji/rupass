@@ -26,7 +26,28 @@ pub(crate) struct TeamCommandInput {
     about = "轻量级团队密码管理工具",
     override_usage = "rupass <COMMAND>\n       rupass <team> get <key>",
     long_about = "rupass 是一个轻量级团队密码管理工具。\n支持 TUI 和完整 CLI，便于脚本或 AI 通过命令行管理团队、密钥与同步。",
-    after_help = "示例:\n  rupass tui\n  rupass team list\n  rupass team create dev_team --password secret\n  rupass key set --team dev_team db_password hello123\n  rupass get db_password\n  rupass this_is_a_test_team get db_password"
+    after_help = concat!(
+        "通用示例:\n",
+        "  rupass tui\n",
+        "  rupass team list\n",
+        "  rupass team create dev_team --password secret\n",
+        "  rupass team set-remote dev_team git@github.com:org/repo.git\n",
+        "  rupass sync-all\n",
+        "\n",
+        "默认团队示例（本地仅有一个团队时）:\n",
+        "  rupass get db_password\n",
+        "  rupass key list\n",
+        "  rupass key get db_password\n",
+        "  rupass key set db_password hello123\n",
+        "  rupass key delete db_password\n",
+        "\n",
+        "传递团队示例:\n",
+        "  rupass this_is_a_test_team get db_password\n",
+        "  rupass key list --team this_is_a_test_team\n",
+        "  rupass key get --team this_is_a_test_team db_password\n",
+        "  rupass key set --team this_is_a_test_team db_password hello123\n",
+        "  rupass key delete --team this_is_a_test_team db_password\n"
+    )
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -59,7 +80,19 @@ pub(crate) enum Commands {
     #[command(
         name = "key",
         about = "密钥管理命令",
-        after_help = "示例:\n  rupass key list --team dev_team\n  rupass key get --team dev_team db_password\n  rupass key set --team dev_team db_password hello123"
+        after_help = concat!(
+            "默认团队示例（本地仅有一个团队时）:\n",
+            "  rupass key list\n",
+            "  rupass key get db_password\n",
+            "  rupass key set db_password hello123\n",
+            "  rupass key delete db_password\n",
+            "\n",
+            "传递团队示例:\n",
+            "  rupass key list --team dev_team\n",
+            "  rupass key get --team dev_team db_password\n",
+            "  rupass key set --team dev_team db_password hello123\n",
+            "  rupass key delete --team dev_team db_password\n"
+        )
     )]
     Key {
         #[command(subcommand)]
@@ -169,7 +202,10 @@ pub(crate) struct KeyDeleteArgs {
     version,
     about = "团队作用域读取命令",
     long_about = "使用 `rupass <team> get <key>` 在指定团队下读取密钥值。",
-    after_help = "示例:\n  rupass this_is_a_test_team get db_password"
+    after_help = concat!(
+        "传递团队示例:\n",
+        "  rupass this_is_a_test_team get db_password\n"
+    )
 )]
 pub(crate) struct ExplicitTeamScopedCli {
     #[arg(help = "团队英文名，必须以 _team 结尾")]
@@ -184,7 +220,11 @@ pub(crate) struct ExplicitTeamScopedCli {
     version,
     about = "默认团队读取命令",
     long_about = "当本地只有一个团队时，可省略 team 直接读取密钥值。",
-    after_help = "示例:\n  rupass get db_password"
+    after_help = concat!(
+        "默认团队示例（本地仅有一个团队时）:\n",
+        "  rupass get db_password\n",
+        "  rupass key get db_password\n"
+    )
 )]
 pub(crate) struct ImplicitTeamScopedCli {
     #[command(subcommand)]
@@ -195,7 +235,13 @@ pub(crate) struct ImplicitTeamScopedCli {
 pub(crate) enum TeamScopedCommands {
     #[command(
         about = "读取密钥值",
-        after_help = "示例:\n  rupass this_is_a_test_team get db_password"
+        after_help = concat!(
+            "默认团队示例（本地仅有一个团队时）:\n",
+            "  rupass get db_password\n",
+            "\n",
+            "传递团队示例:\n",
+            "  rupass this_is_a_test_team get db_password\n"
+        )
     )]
     Get(TeamScopedSecretKeyArgs),
 }
