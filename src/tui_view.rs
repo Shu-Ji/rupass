@@ -33,6 +33,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
         Dialog::Form(dialog) => render_form_dialog(frame, dialog),
         Dialog::ConfirmDeleteKey { team, key } => render_confirm_dialog(frame, team, key),
         Dialog::SecretView { key, value } => render_secret_dialog(frame, key, value),
+        Dialog::Progress { title, message } => render_progress_dialog(frame, title, message),
         Dialog::Help => render_help_dialog(frame, app),
     }
 }
@@ -344,6 +345,29 @@ fn render_secret_dialog(frame: &mut Frame, key: &str, value: &str) {
             Line::from("Esc 关闭"),
         ]))
         .block(block("密钥值", true))
+        .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_progress_dialog(frame: &mut Frame, title: &'static str, message: &str) {
+    let area = popup_area(frame.area(), 56, 8);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                "请稍候，正在执行同步操作…",
+                primary_style().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::raw(message.to_string())),
+            Line::from(""),
+            Line::from(Span::styled(
+                "完成后会自动关闭此弹窗。",
+                muted(),
+            )),
+        ]))
+        .block(block(title, true))
         .wrap(Wrap { trim: false }),
         area,
     );

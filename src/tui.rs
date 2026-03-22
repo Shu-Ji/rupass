@@ -34,6 +34,12 @@ pub(crate) fn run(paths: AppPaths) -> Result<()> {
 fn run_loop(terminal: &mut TuiTerminal, mut app: App) -> Result<()> {
     loop {
         terminal.draw(|frame| draw(frame, &app))?;
+        if app.has_pending_action() {
+            if let Err(err) = app.run_pending_action() {
+                app.show_error(err.to_string());
+            }
+            continue;
+        }
         if event::poll(Duration::from_millis(120)).context("failed to poll terminal events")?
             && let Event::Key(key) = event::read().context("failed to read terminal event")?
         {

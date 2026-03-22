@@ -14,6 +14,7 @@ pub(crate) struct App {
     pub(crate) team_index: usize,
     pub(crate) page: Page,
     pub(crate) dialog: Dialog,
+    pub(crate) pending_action: Option<PendingAction>,
     pub(crate) status: String,
 }
 
@@ -27,7 +28,13 @@ pub(crate) enum Dialog {
     Form(FormDialog),
     ConfirmDeleteKey { team: String, key: String },
     SecretView { key: String, value: String },
+    Progress { title: &'static str, message: String },
     Help,
+}
+
+pub(crate) enum PendingAction {
+    SyncCurrentTeam,
+    SyncAllTeams,
 }
 
 pub(crate) struct FormDialog {
@@ -64,6 +71,7 @@ impl App {
             team_index: 0,
             page: Page::TeamList,
             dialog: Dialog::None,
+            pending_action: None,
             status: "先选择一个团队，或创建新团队。".to_string(),
         };
         app.reload_teams()?;
@@ -81,6 +89,7 @@ impl App {
                 }
                 Ok(false)
             }
+            Dialog::Progress { .. } => Ok(false),
         }
     }
 
@@ -140,7 +149,7 @@ impl App {
             KeyCode::Char('c') => self.open_create_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Char('r') => self.open_set_remote(),
-            KeyCode::Char('s') => self.sync_all_teams()?,
+            KeyCode::Char('s') => self.queue_sync_all_teams(),
             KeyCode::Char('x') => self.open_delete_team(),
             _ => {}
         }
@@ -155,7 +164,7 @@ impl App {
             KeyCode::Char('a') => self.open_add_secret(),
             KeyCode::Char('e') => self.open_edit_secret()?,
             KeyCode::Char('d') => self.open_delete_key(),
-            KeyCode::Char('s') => self.sync_current_team()?,
+            KeyCode::Char('s') => self.queue_sync_current_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Esc => self.back_to_team_list(),
             _ => {}
@@ -272,6 +281,79 @@ impl App {
             *key_index = self.keys.len() - 1;
         }
         Ok(())
+    }
+
+    pub(crate) fn has_pending_action(&self) -> bool {
+        self.pending_action.is_some()
+    }
+
+    pub(crate) fn run_pending_action(&mut self) -> Result<()> {
+        let Some(action) = self.pending_action.take() else {
+            return Ok(());
+        };
+
+        let result = match action {
+            PendingAction::SyncCurrentTeam => self.sync_current_team(),
+            PendingAction::SyncAllTeams => self.sync_all_teams(),
+        };
+        self.dialog = Dialog::None;
+        result
+    }
+
+    fn queue_sync_current_team(&mut self) {
+        let Some(access) = self.selected_access() else {
+            self.status = "请先解锁团队，再执行同步".to_string();
+            return;
+        };
+        if access.config.git_remote.is_none() {
+            self.status = format!("错误: 团队未配置远程仓库: {}", access.config.team_name);
+            return;
+        }
+
+        self.dialog = Dialog::Progress {
+            title: "同步中",
+            message: format!("正在同步团队 {}，完成后会自动关闭。", access.config.team_name),
+        };
+        self.pending_action = Some(PendingAction::SyncCurrentTeam);
+    }
+
+    fn queue_sync_all_teams(&mut self) {
+        if self.teams.is_empty() {
+            self.status = "没有可同步的团队".to_string();
+            return;
+        }
+
+        let locked = self
+            .teams
+            .iter()
+            .filter(|team| !self.unlocked.contains_key(&team.team_name))
+            .map(|team| team.team_name.clone())
+            .collect::<Vec<_>>();
+        if !locked.is_empty() {
+            self.status = format!("错误: 请先解锁全部团队: {}", locked.join(", "));
+            return;
+        }
+
+        let ready = self
+            .teams
+            .iter()
+            .filter(|team| team.git_remote.is_some())
+            .count();
+        if ready == 0 {
+            let names = self
+                .teams
+                .iter()
+                .map(|team| team.team_name.clone())
+                .collect::<Vec<_>>();
+            self.status = format!("错误: 没有已配置远程仓库的团队: {}", names.join(", "));
+            return;
+        }
+
+        self.dialog = Dialog::Progress {
+            title: "同步中",
+            message: format!("正在同步 {ready} 个团队，完成后会自动关闭。"),
+        };
+        self.pending_action = Some(PendingAction::SyncAllTeams);
     }
 }
 
