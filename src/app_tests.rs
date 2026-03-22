@@ -60,6 +60,18 @@ fn errors_when_no_team_exists() {
 }
 
 #[test]
+fn sync_all_errors_when_no_remote_configured() {
+    let paths = test_paths();
+    paths.ensure_base_dirs().unwrap();
+    save_team_config(&paths, &test_config("dev_team")).unwrap();
+
+    let err = sync_all_teams(&paths).unwrap_err();
+
+    assert!(err.to_string().contains("no team has a remote configured"));
+    assert!(err.to_string().contains("dev_team"));
+}
+
+#[test]
 fn unlock_uses_stored_cipher_key_without_password() {
     let paths = test_paths();
     paths.ensure_base_dirs().unwrap();

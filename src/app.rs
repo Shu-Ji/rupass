@@ -80,10 +80,25 @@ fn sync_all_teams(paths: &AppPaths) -> Result<()> {
         bail!("no team initialized. run `rupass tui` first");
     }
 
+    let mut synced = 0_usize;
+    let mut skipped = Vec::new();
     for team in teams {
+        if team.git_remote.is_none() {
+            eprintln!("skipped team without remote: {}", team.team_name);
+            skipped.push(team.team_name);
+            continue;
+        }
         let access = authenticate_team(paths, &team.team_name)?;
         sync_team_repo(&paths.team_store_dir(&team.team_name), &access.config)?;
         println!("synced team: {}", team.team_name);
+        synced += 1;
+    }
+
+    if synced == 0 {
+        bail!(
+            "no team has a remote configured: {}",
+            skipped.join(", ")
+        );
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::storage::AppPaths;
 use crate::tui_ops::{self, TeamAccess, TeamSummary};
@@ -182,7 +182,10 @@ impl App {
             }
             KeyCode::Enter => self.submit_form()?,
             KeyCode::Char(ch) => {
-                if !key.modifiers.is_empty() {
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+                {
                     return Ok(false);
                 }
                 dialog.fields[dialog.index].value.push(ch);

@@ -72,7 +72,7 @@ impl App {
                 InputField {
                     label: "Value",
                     value: String::new(),
-                    secret: true,
+                    secret: false,
                 },
             ],
             index: 0,
@@ -107,7 +107,7 @@ impl App {
                 InputField {
                     label: "Value",
                     value,
-                    secret: true,
+                    secret: false,
                 },
             ],
             index: 0,
@@ -191,6 +191,10 @@ impl App {
             self.status = "请先解锁团队，再执行同步".to_string();
             return Ok(());
         };
+        if access.config.git_remote.is_none() {
+            self.status = format!("错误: 团队未配置远程仓库: {}", access.config.team_name);
+            return Ok(());
+        }
         tui_ops::sync_team(&self.paths, &access)?;
         self.reload_teams()?;
         self.status = format!("已同步团队: {}", access.config.team_name);
@@ -214,13 +218,31 @@ impl App {
             return Ok(());
         }
 
+        let mut synced = 0_usize;
+        let mut skipped = Vec::new();
         for team in &self.teams {
+            if team.git_remote.is_none() {
+                skipped.push(team.team_name.clone());
+                continue;
+            }
             if let Some(access) = self.unlocked.get(&team.team_name).cloned() {
                 tui_ops::sync_team(&self.paths, &access)?;
+                synced += 1;
             }
         }
+        if synced == 0 {
+            self.status = format!("错误: 没有已配置远程仓库的团队: {}", skipped.join(", "));
+            return Ok(());
+        }
         self.reload_teams()?;
-        self.status = format!("已同步全部团队: {}", self.teams.len());
+        self.status = if skipped.is_empty() {
+            format!("已同步全部团队: {synced}")
+        } else {
+            format!(
+                "已同步 {synced} 个团队，未配置远程仓库: {}",
+                skipped.join(", ")
+            )
+        };
         Ok(())
     }
 
