@@ -1,13 +1,22 @@
+use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use crate::cli::{Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands};
+use crate::cli::{
+    Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamImportArgs, TeamScopedCommands,
+};
 use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
-use crate::git_sync::sync_team_repo;
+use crate::git_sync::{TeamMetadata, bootstrap_team_repo, load_team_metadata, sync_team_repo};
 use crate::storage::{
     AppPaths, SecretRecord, TeamConfig, list_team_configs, load_secret_record, load_team_config,
+    save_team_config, validate_team_name,
 };
 use crate::tui_ops;
+
+static IMPORT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug)]
 struct TeamAccess {
@@ -33,13 +42,19 @@ pub(crate) fn dispatch(cli: ParsedCli) -> Result<()> {
         ParsedCli::TeamScoped(cli) => {
             let team = resolve_target_team(&paths, cli.team.as_deref())?;
             match cli.command {
-                TeamScopedCommands::List(args) => list_keys(&paths, &team, args.password.as_deref()),
+                TeamScopedCommands::List(args) => {
+                    list_keys(&paths, &team, args.password.as_deref())
+                }
                 TeamScopedCommands::Get(args) => {
                     get_secret(&paths, &team, &args.key, args.password.as_deref())
                 }
-                TeamScopedCommands::Set(args) => {
-                    set_secret(&paths, &team, &args.key, &args.value, args.password.as_deref())
-                }
+                TeamScopedCommands::Set(args) => set_secret(
+                    &paths,
+                    &team,
+                    &args.key,
+                    &args.value,
+                    args.password.as_deref(),
+                ),
                 TeamScopedCommands::Del(args) => {
                     delete_secret(&paths, &team, &args.key, args.password.as_deref())
                 }
@@ -52,9 +67,18 @@ fn dispatch_team_command(paths: &AppPaths, command: TeamCommands) -> Result<()> 
     match command {
         TeamCommands::List => list_teams(paths),
         TeamCommands::Create(args) => create_team(paths, args),
+        TeamCommands::Import(args) => {
+            let team = import_team(paths, args)?;
+            println!("imported team: {team}");
+            Ok(())
+        }
         TeamCommands::Del(args) => delete_team(paths, &args.team, args.password.as_deref()),
-        TeamCommands::SetRemote(args) => set_team_remote(paths, &args.team, &args.url, args.password.as_deref()),
-        TeamCommands::ClearRemote(args) => clear_team_remote(paths, &args.team, args.password.as_deref()),
+        TeamCommands::SetRemote(args) => {
+            set_team_remote(paths, &args.team, &args.url, args.password.as_deref())
+        }
+        TeamCommands::ClearRemote(args) => {
+            clear_team_remote(paths, &args.team, args.password.as_deref())
+        }
         TeamCommands::Sync(args) => sync_team(paths, &args.team, args.password.as_deref()),
     }
 }
@@ -117,10 +141,7 @@ fn sync_all_teams(paths: &AppPaths) -> Result<()> {
     }
 
     if synced == 0 {
-        bail!(
-            "no team has a remote configured: {}",
-            skipped.join(", ")
-        );
+        bail!("no team has a remote configured: {}", skipped.join(", "));
     }
     Ok(())
 }
@@ -147,6 +168,32 @@ fn create_team(paths: &AppPaths, args: TeamCreateArgs) -> Result<()> {
     tui_ops::create_team(paths, &args.team, &password, &password_confirm)?;
     println!("created team: {}", args.team);
     Ok(())
+}
+
+pub(crate) fn import_team(paths: &AppPaths, args: TeamImportArgs) -> Result<String> {
+    let (requested_team, url) = resolve_import_target(&args)?;
+    if let Some(team) = requested_team.as_deref() {
+        validate_team_name(team)?;
+        if paths.config_path(team).exists() {
+            bail!("team already exists: {team}");
+        }
+    }
+
+    let temp_repo = TemporaryImportRepo::create()?;
+    bootstrap_team_repo(temp_repo.path(), &url)?;
+    let metadata = load_team_metadata(temp_repo.path())
+        .with_context(|| format!("failed to load team metadata from {url}"))?;
+    let team = requested_team.unwrap_or_else(|| metadata.team_name.clone());
+    validate_team_name(&team)?;
+    if paths.config_path(&team).exists() {
+        bail!("team already exists: {team}");
+    }
+
+    let password = resolve_existing_password(&team, args.password.as_deref())?;
+    let config = build_imported_team_config(&team, &url, &password, &metadata)?;
+    temp_repo.persist_to(&paths.team_store_dir(&team))?;
+    save_team_config(paths, &config)?;
+    Ok(team)
 }
 
 fn delete_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
@@ -189,7 +236,12 @@ fn list_keys(paths: &AppPaths, team: &ResolvedTeam, password: Option<&str>) -> R
     Ok(())
 }
 
-fn get_secret(paths: &AppPaths, team: &ResolvedTeam, key: &str, password: Option<&str>) -> Result<()> {
+fn get_secret(
+    paths: &AppPaths,
+    team: &ResolvedTeam,
+    key: &str,
+    password: Option<&str>,
+) -> Result<()> {
     let cipher_key = if let Some(password) = password {
         tui_ops::open_team(paths, &team.name, Some(password))?.cipher_key
     } else {
@@ -283,15 +335,129 @@ fn migrate_team_cipher_key(
     Ok((access.config, access.cipher_key))
 }
 
+fn resolve_import_target(args: &TeamImportArgs) -> Result<(Option<String>, String)> {
+    if let Some(team) = args.team.as_deref() {
+        validate_team_name(team)?;
+        let [url] = args.args.as_slice() else {
+            bail!("`rupass team import --team <team>` requires exactly one remote url");
+        };
+        return Ok((Some(team.to_string()), url.clone()));
+    }
+
+    match args.args.as_slice() {
+        [url] => Ok((None, url.clone())),
+        [team, url] if validate_team_name(team).is_ok() => Ok((Some(team.clone()), url.clone())),
+        [_, _] => bail!(
+            "invalid import arguments. use `rupass team import <remote>` or `rupass team import <team> <remote>`"
+        ),
+        _ => bail!("missing remote url"),
+    }
+}
+
+fn build_imported_team_config(
+    team: &str,
+    remote: &str,
+    password: &str,
+    metadata: &TeamMetadata,
+) -> Result<TeamConfig> {
+    if metadata.team_name != team {
+        bail!(
+            "remote team mismatch: expected {}, got {}",
+            team,
+            metadata.team_name
+        );
+    }
+
+    let salt = STANDARD
+        .decode(&metadata.salt)
+        .with_context(|| format!("invalid salt for {team}"))?;
+    let expected = STANDARD
+        .decode(&metadata.password_verifier)
+        .with_context(|| format!("invalid password verifier for {team}"))?;
+    let derived_key = derive_key(password, &salt)?;
+
+    if expected != password_verifier(&derived_key) {
+        bail!("invalid password for team: {team}");
+    }
+
+    Ok(TeamConfig {
+        team_name: team.to_string(),
+        salt: metadata.salt.clone(),
+        password_verifier: metadata.password_verifier.clone(),
+        cipher_key: Some(STANDARD.encode(derived_key)),
+        git_remote: Some(remote.to_string()),
+    })
+}
+
+struct TemporaryImportRepo {
+    path: std::path::PathBuf,
+    keep: bool,
+}
+
+impl TemporaryImportRepo {
+    fn create() -> Result<Self> {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before unix epoch")?
+            .as_nanos();
+        let counter = IMPORT_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "rupass-import-{}-{suffix}-{counter}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path)
+            .with_context(|| format!("failed to create temporary import dir {}", path.display()))?;
+        Ok(Self { path, keep: false })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn persist_to(mut self, target: &std::path::Path) -> Result<()> {
+        if target.exists() {
+            let is_empty = fs::read_dir(target)
+                .with_context(|| format!("failed to read {}", target.display()))?
+                .next()
+                .is_none();
+            if !is_empty {
+                bail!("team store already exists: {}", target.display());
+            }
+            fs::remove_dir(target)
+                .with_context(|| format!("failed to remove {}", target.display()))?;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        fs::rename(&self.path, target).with_context(|| {
+            format!(
+                "failed to move imported repo from {} to {}",
+                self.path.display(),
+                target.display()
+            )
+        })?;
+        self.keep = true;
+        Ok(())
+    }
+}
+
+impl Drop for TemporaryImportRepo {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 fn resolve_create_passwords(args: &TeamCreateArgs) -> Result<(String, String)> {
     match (&args.password, &args.password_confirm) {
         (Some(password), Some(confirm)) => Ok((password.clone(), confirm.clone())),
         (Some(password), None) => Ok((password.clone(), password.clone())),
         (None, Some(_)) => bail!("--password-confirm requires --password"),
         (None, None) => {
-            let password =
-                rpassword::prompt_password(format!("password for {}: ", args.team))
-                    .context("failed to read password")?;
+            let password = rpassword::prompt_password(format!("password for {}: ", args.team))
+                .context("failed to read password")?;
             if password.is_empty() {
                 bail!("password cannot be empty");
             }

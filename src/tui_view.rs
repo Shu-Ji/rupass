@@ -362,10 +362,7 @@ fn render_progress_dialog(frame: &mut Frame, title: &'static str, message: &str)
             Line::from(""),
             Line::from(Span::raw(message.to_string())),
             Line::from(""),
-            Line::from(Span::styled(
-                "完成后会自动关闭此弹窗。",
-                muted(),
-            )),
+            Line::from(Span::styled("完成后会自动关闭此弹窗。", muted())),
         ]))
         .block(block(title, true))
         .wrap(Wrap { trim: false }),
@@ -429,7 +426,10 @@ fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
     match &app.page {
         Page::TeamList => {
             if app.is_add_team_selected() || app.selected_team().is_none() {
-                vec![action_line("c", "创建团队", primary_style())]
+                vec![
+                    action_line("i", "从远程导入团队", primary_style()),
+                    action_line("c", "创建团队", accent_style()),
+                ]
             } else if let Some(team) = app.selected_team() {
                 if !app.unlocked.contains_key(&team.team_name) {
                     vec![action_line("u", "先解锁当前团队", primary_style())]
@@ -462,6 +462,7 @@ fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
 fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
     match app.page {
         Page::TeamList => vec![
+            action_line("i", "从远程导入团队", primary_style()),
             action_line("c", "创建团队", primary_style()),
             action_line("u", "解锁团队", accent_style()),
             action_line("r", "设置/清空 remote", accent_style()),

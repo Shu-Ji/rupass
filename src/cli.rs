@@ -31,6 +31,7 @@ pub(crate) struct TeamCommandInput {
         "  rupass tui\n",
         "  rupass team list\n",
         "  rupass team create my_team --password secret\n",
+        "  rupass team import git@github.com:org/repo.git --password secret\n",
         "  rupass team set-remote my_team git@github.com:org/repo.git\n",
         "  rupass sync-all\n",
         "\n",
@@ -69,7 +70,7 @@ pub(crate) enum Commands {
     #[command(
         name = "team",
         about = "团队管理命令",
-        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team set-remote my_team git@github.com:org/repo.git"
+        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import git@github.com:org/repo.git --password secret\n  rupass team set-remote my_team git@github.com:org/repo.git"
     )]
     Team {
         #[command(subcommand)]
@@ -83,6 +84,8 @@ pub(crate) enum TeamCommands {
     List,
     #[command(about = "创建团队")]
     Create(TeamCreateArgs),
+    #[command(about = "从远程仓库导入团队")]
+    Import(TeamImportArgs),
     #[command(name = "del", about = "删除团队")]
     Del(TeamPasswordTargetArgs),
     #[command(about = "设置团队远程仓库")]
@@ -99,8 +102,21 @@ pub(crate) struct TeamCreateArgs {
     pub(crate) team: String,
     #[arg(long, help = "团队密码；不传则交互输入")]
     pub(crate) password: Option<String>,
-    #[arg(long = "password-confirm", help = "确认密码；不传则默认与 --password 相同，或交互输入")]
+    #[arg(
+        long = "password-confirm",
+        help = "确认密码；不传则默认与 --password 相同，或交互输入"
+    )]
     pub(crate) password_confirm: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamImportArgs {
+    #[arg(help = "远程仓库地址；兼容旧格式时也可先传团队名", required = true, num_args = 1..=2)]
+    pub(crate) args: Vec<String>,
+    #[arg(long, help = "本地团队名；不传则从远程仓库元数据读取")]
+    pub(crate) team: Option<String>,
+    #[arg(long, help = "团队密码；不传则交互输入")]
+    pub(crate) password: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -367,13 +383,72 @@ mod tests {
 
     #[test]
     fn parses_team_create_command() {
-        let cli = parse_from(["rupass", "team", "create", "my_team", "--password", "secret"]).unwrap();
+        let cli = parse_from([
+            "rupass",
+            "team",
+            "create",
+            "my_team",
+            "--password",
+            "secret",
+        ])
+        .unwrap();
         match cli {
             ParsedCli::Standard(cli) => match cli.command {
                 Commands::Team { command } => match command {
                     TeamCommands::Create(args) => {
                         assert_eq!(args.team, "my_team");
                         assert_eq!(args.password.as_deref(), Some("secret"));
+                    }
+                    other => panic!("unexpected team command: {other:?}"),
+                },
+                command => panic!("unexpected command: {command:?}"),
+            },
+            other => panic!("unexpected cli: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_team_import_command_without_team() {
+        let cli = parse_from([
+            "rupass",
+            "team",
+            "import",
+            "git@github.com:org/repo.git",
+            "--password",
+            "secret",
+        ])
+        .unwrap();
+        match cli {
+            ParsedCli::Standard(cli) => match cli.command {
+                Commands::Team { command } => match command {
+                    TeamCommands::Import(args) => {
+                        assert_eq!(args.args, vec!["git@github.com:org/repo.git"]);
+                        assert_eq!(args.team, None);
+                        assert_eq!(args.password.as_deref(), Some("secret"));
+                    }
+                    other => panic!("unexpected team command: {other:?}"),
+                },
+                command => panic!("unexpected command: {command:?}"),
+            },
+            other => panic!("unexpected cli: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_team_import_command_with_legacy_team_arg() {
+        let cli = parse_from([
+            "rupass",
+            "team",
+            "import",
+            "my_team",
+            "git@github.com:org/repo.git",
+        ])
+        .unwrap();
+        match cli {
+            ParsedCli::Standard(cli) => match cli.command {
+                Commands::Team { command } => match command {
+                    TeamCommands::Import(args) => {
+                        assert_eq!(args.args, vec!["my_team", "git@github.com:org/repo.git"]);
                     }
                     other => panic!("unexpected team command: {other:?}"),
                 },

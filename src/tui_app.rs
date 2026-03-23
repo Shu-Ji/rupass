@@ -26,9 +26,18 @@ pub(crate) enum Page {
 pub(crate) enum Dialog {
     None,
     Form(FormDialog),
-    ConfirmDeleteKey { team: String, key: String },
-    SecretView { key: String, value: String },
-    Progress { title: &'static str, message: String },
+    ConfirmDeleteKey {
+        team: String,
+        key: String,
+    },
+    SecretView {
+        key: String,
+        value: String,
+    },
+    Progress {
+        title: &'static str,
+        message: String,
+    },
     Help,
 }
 
@@ -48,6 +57,7 @@ pub(crate) struct FormDialog {
 
 pub(crate) enum FormKind {
     CreateTeam,
+    ImportTeam,
     UnlockTeam(String),
     AddSecret(String),
     EditSecret(String),
@@ -147,6 +157,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_team_selection(1),
             KeyCode::Enter => self.enter_team(),
             KeyCode::Char('c') => self.open_create_team(),
+            KeyCode::Char('i') => self.open_import_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Char('r') => self.open_set_remote(),
             KeyCode::Char('s') => self.queue_sync_all_teams(),
@@ -316,7 +327,10 @@ impl App {
 
         self.dialog = Dialog::Progress {
             title: "同步中",
-            message: format!("正在同步团队 {}，完成后会自动关闭。", access.config.team_name),
+            message: format!(
+                "正在同步团队 {}，完成后会自动关闭。",
+                access.config.team_name
+            ),
         };
         self.pending_action = Some(PendingAction::SyncCurrentTeam);
     }

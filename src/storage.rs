@@ -152,6 +152,12 @@ pub(crate) fn list_secret_records(paths: &AppPaths, team: &str) -> Result<Vec<Se
         fs::read_dir(&team_dir).with_context(|| format!("failed to read {}", team_dir.display()))?
     {
         let path = entry?.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_name.starts_with('.') {
+            continue;
+        }
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
@@ -180,5 +186,40 @@ mod tests {
         assert!(validate_team_name("dev_team").is_ok());
         assert!(validate_team_name("default").is_err());
         assert!(validate_team_name("Default_team").is_err());
+    }
+
+    #[test]
+    fn list_secret_records_ignores_hidden_json_files() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "rupass-storage-test-{}-{suffix}",
+            std::process::id()
+        ));
+        let paths = AppPaths::from_dirs(base.join("config"), base.join("store"));
+        paths.ensure_base_dirs().unwrap();
+        let team_dir = paths.team_store_dir("dev_team");
+        fs::create_dir_all(&team_dir).unwrap();
+        fs::write(
+            team_dir.join(".rupass-team.json"),
+            br#"{"team_name":"dev_team"}"#,
+        )
+        .unwrap();
+        fs::write(
+            team_dir.join("a.json"),
+            br#"{
+  "encrypted_key":"k",
+  "encrypted_value":"v",
+  "key_nonce":"n1",
+  "value_nonce":"n2"
+}"#,
+        )
+        .unwrap();
+
+        let records = list_secret_records(&paths, "dev_team").unwrap();
+
+        assert_eq!(records.len(), 1);
     }
 }

@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::app;
+use crate::cli::TeamImportArgs;
 use crate::tui_app::{App, Dialog, FormDialog, FormKind, InputField, Page};
 use crate::tui_ops;
 
@@ -22,6 +24,28 @@ impl App {
                 },
                 InputField {
                     label: "确认密码",
+                    value: String::new(),
+                    secret: true,
+                },
+            ],
+            index: 0,
+            error: None,
+        });
+    }
+
+    pub(crate) fn open_import_team(&mut self) {
+        self.dialog = Dialog::Form(FormDialog {
+            title: "导入团队",
+            submit_label: "Enter 导入",
+            kind: FormKind::ImportTeam,
+            fields: vec![
+                InputField {
+                    label: "Remote URL",
+                    value: String::new(),
+                    secret: false,
+                },
+                InputField {
+                    label: "密码",
                     value: String::new(),
                     secret: true,
                 },
@@ -269,6 +293,35 @@ impl App {
                 self.status = format!("已创建团队: {team}");
                 Ok(())
             }
+            FormKind::ImportTeam => {
+                let remote = dialog.fields[0].value.trim();
+                let password = dialog.fields[1].value.trim();
+                if remote.is_empty() {
+                    anyhow::bail!("remote url cannot be empty");
+                }
+                if password.is_empty() {
+                    anyhow::bail!("password cannot be empty");
+                }
+
+                let team = app::import_team(
+                    &self.paths,
+                    TeamImportArgs {
+                        args: vec![remote.to_string()],
+                        team: None,
+                        password: Some(password.to_string()),
+                    },
+                )?;
+                let access = tui_ops::open_team(&self.paths, &team, None)?;
+                self.unlocked.insert(team.clone(), access);
+                self.reload_teams()?;
+                self.team_index = self
+                    .teams
+                    .iter()
+                    .position(|item| item.team_name == team)
+                    .unwrap_or(0);
+                self.status = format!("已导入团队: {team}");
+                Ok(())
+            }
             FormKind::UnlockTeam(team) => {
                 let access = tui_ops::unlock_team(&self.paths, team, &dialog.fields[0].value)?;
                 self.unlocked.insert(team.clone(), access);
@@ -358,5 +411,95 @@ impl App {
         self.status = format!("已删除 key: {key}");
         self.dialog = Dialog::None;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    use super::*;
+    use crate::crypto::{derive_key, password_verifier};
+    use crate::storage::AppPaths;
+
+    fn test_paths() -> AppPaths {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "rupass-tui-actions-test-{}-{suffix}",
+            std::process::id()
+        ));
+        AppPaths::from_dirs(base.join("config"), base.join("store"))
+    }
+
+    fn run_git(repo_dir: &std::path::Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(repo_dir)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "git command failed: git {}",
+            args.join(" ")
+        );
+    }
+
+    fn init_remote_repo(team_name: &str, password: &str) -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_dir = std::env::temp_dir().join(format!("rupass-tui-remote-repo-{suffix}"));
+        fs::create_dir_all(&repo_dir).unwrap();
+        run_git(&repo_dir, &["init", "-b", "main"]);
+        run_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_dir, &["config", "user.name", "rupass-test"]);
+
+        let salt = [6_u8; 16];
+        let key = derive_key(password, &salt).unwrap();
+        let metadata = serde_json::json!({
+            "team_name": team_name,
+            "salt": STANDARD.encode(salt),
+            "password_verifier": STANDARD.encode(password_verifier(&key)),
+        });
+        fs::write(
+            repo_dir.join(".rupass-team.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        run_git(&repo_dir, &["add", "."]);
+        run_git(&repo_dir, &["commit", "-m", "init"]);
+
+        repo_dir
+    }
+
+    #[test]
+    fn imports_team_from_tui_form() {
+        let paths = test_paths();
+        paths.ensure_base_dirs().unwrap();
+        let remote_repo = init_remote_repo("dev_team", "secret");
+        let mut app = App::new(paths).unwrap();
+
+        app.open_import_team();
+        let Dialog::Form(dialog) = &mut app.dialog else {
+            panic!("expected form dialog");
+        };
+        dialog.fields[0].value = remote_repo.display().to_string();
+        dialog.fields[1].value = "secret".to_string();
+
+        app.submit_form().unwrap();
+
+        assert_eq!(app.teams.len(), 1);
+        assert_eq!(app.teams[0].team_name, "dev_team");
+        assert!(app.unlocked.contains_key("dev_team"));
+        assert!(matches!(app.dialog, Dialog::None));
+        assert_eq!(app.status, "已导入团队: dev_team");
     }
 }

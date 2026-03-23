@@ -1,13 +1,23 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 
 use crate::storage::TeamConfig;
+
+const TEAM_METADATA_FILE: &str = ".rupass-team.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct TeamMetadata {
+    pub(crate) team_name: String,
+    pub(crate) salt: String,
+    pub(crate) password_verifier: String,
+}
 
 pub(crate) fn ensure_git_repo(repo_dir: &Path) -> Result<()> {
     if repo_dir.join(".git").exists() {
@@ -20,13 +30,32 @@ pub(crate) fn ensure_git_repo(repo_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn bootstrap_team_repo(repo_dir: &Path, remote: &str) -> Result<()> {
+    ensure_git_repo(repo_dir)?;
+    ensure_git_remote(repo_dir, remote)?;
+    bootstrap_from_remote_if_needed(repo_dir)?;
+    Ok(())
+}
+
+pub(crate) fn load_team_metadata(repo_dir: &Path) -> Result<TeamMetadata> {
+    let path = team_metadata_path(repo_dir);
+    if !path.exists() {
+        bail!(
+            "missing remote team metadata: {}\n请在旧机器上升级到最新 rupass 后执行一次同步，再重试导入",
+            path.display()
+        );
+    }
+
+    read_json(&path)
+}
+
 pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
     let _lock = acquire_sync_lock(repo_dir)?;
     ensure_git_repo(repo_dir)?;
 
     if let Some(remote) = &config.git_remote {
-        ensure_git_remote(repo_dir, remote)?;
-        bootstrap_from_remote_if_needed(repo_dir)?;
+        bootstrap_team_repo(repo_dir, remote)?;
+        sync_team_metadata(repo_dir, config)?;
     }
 
     let has_changes = repo_has_changes(repo_dir)?;
@@ -50,12 +79,33 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
             }
         }
 
-        if has_local_commits(repo_dir)? && let Err(err) = run_git(repo_dir, &["push", "-u", "origin", "main"]) {
+        if has_local_commits(repo_dir)?
+            && let Err(err) = run_git(repo_dir, &["push", "-u", "origin", "main"])
+        {
             bail!("{}", format_sync_error(repo_dir, &err.to_string()));
         }
     }
 
     Ok(())
+}
+
+fn sync_team_metadata(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
+    let path = team_metadata_path(repo_dir);
+    let expected = TeamMetadata::from(config);
+
+    if path.exists() {
+        let actual: TeamMetadata = read_json(&path)?;
+        if actual != expected {
+            bail!(
+                "remote team metadata does not match local config\nrepo: {}\nmetadata: {}",
+                repo_dir.display(),
+                path.display()
+            );
+        }
+        return Ok(());
+    }
+
+    write_json(&path, &expected)
 }
 
 #[derive(Debug)]
@@ -101,6 +151,10 @@ fn repo_has_changes(repo_dir: &Path) -> Result<bool> {
 
 fn has_local_commits(repo_dir: &Path) -> Result<bool> {
     Ok(run_git(repo_dir, &["rev-parse", "--verify", "HEAD"]).is_ok())
+}
+
+fn team_metadata_path(repo_dir: &Path) -> PathBuf {
+    repo_dir.join(TEAM_METADATA_FILE)
 }
 
 fn remote_has_main_branch(repo_dir: &Path) -> Result<bool> {
@@ -156,8 +210,9 @@ fn acquire_sync_lock(repo_dir: &Path) -> Result<SyncLock> {
             repo_dir.display(),
             lock_path.display()
         ),
-        Err(err) => Err(err)
-            .with_context(|| format!("failed to create sync lock {}", lock_path.display())),
+        Err(err) => {
+            Err(err).with_context(|| format!("failed to create sync lock {}", lock_path.display()))
+        }
     }
 }
 
@@ -203,7 +258,10 @@ fn is_rebase_conflict(message: &str) -> bool {
 }
 
 fn conflict_paths(repo_dir: &Path) -> Result<Vec<String>> {
-    Ok(parse_conflict_paths(&run_git(repo_dir, &["status", "--porcelain"])?))
+    Ok(parse_conflict_paths(&run_git(
+        repo_dir,
+        &["status", "--porcelain"],
+    )?))
 }
 
 fn parse_conflict_paths(status: &str) -> Vec<String> {
@@ -221,6 +279,27 @@ fn parse_conflict_paths(status: &str) -> Vec<String> {
             Some(line[3..].trim().to_string())
         })
         .collect()
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let content = serde_json::to_vec_pretty(value).context("failed to serialize json")?;
+    fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let content = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&content).with_context(|| format!("failed to parse {}", path.display()))
+}
+
+impl From<&TeamConfig> for TeamMetadata {
+    fn from(config: &TeamConfig) -> Self {
+        Self {
+            team_name: config.team_name.clone(),
+            salt: config.salt.clone(),
+            password_verifier: config.password_verifier.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -242,7 +321,9 @@ AA store/c.json\n";
 
     #[test]
     fn detects_rebase_conflict_messages() {
-        assert!(is_rebase_conflict("git pull failed: CONFLICT (content): Merge conflict in a"));
+        assert!(is_rebase_conflict(
+            "git pull failed: CONFLICT (content): Merge conflict in a"
+        ));
         assert!(is_rebase_conflict("could not apply 1234567"));
         assert!(!is_rebase_conflict("authentication failed"));
     }
@@ -261,5 +342,60 @@ AA store/c.json\n";
         let err = acquire_sync_lock(&repo_dir).unwrap_err();
 
         assert!(err.to_string().contains("another sync is already running"));
+    }
+
+    #[test]
+    fn writes_team_metadata_when_missing() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_dir = std::env::temp_dir().join(format!("rupass-team-metadata-test-{suffix}"));
+        fs::create_dir_all(&repo_dir).unwrap();
+        let config = TeamConfig {
+            team_name: "dev_team".to_string(),
+            salt: "salt".to_string(),
+            password_verifier: "verifier".to_string(),
+            cipher_key: None,
+            git_remote: Some("git@example.com:org/dev_team.git".to_string()),
+        };
+
+        sync_team_metadata(&repo_dir, &config).unwrap();
+        let metadata = load_team_metadata(&repo_dir).unwrap();
+
+        assert_eq!(metadata, TeamMetadata::from(&config));
+    }
+
+    #[test]
+    fn rejects_mismatched_team_metadata() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_dir = std::env::temp_dir().join(format!("rupass-team-metadata-mismatch-{suffix}"));
+        fs::create_dir_all(&repo_dir).unwrap();
+        write_json(
+            &team_metadata_path(&repo_dir),
+            &TeamMetadata {
+                team_name: "ops_team".to_string(),
+                salt: "salt".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        )
+        .unwrap();
+        let config = TeamConfig {
+            team_name: "dev_team".to_string(),
+            salt: "salt".to_string(),
+            password_verifier: "verifier".to_string(),
+            cipher_key: None,
+            git_remote: Some("git@example.com:org/dev_team.git".to_string()),
+        };
+
+        let err = sync_team_metadata(&repo_dir, &config).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("remote team metadata does not match local config")
+        );
     }
 }
