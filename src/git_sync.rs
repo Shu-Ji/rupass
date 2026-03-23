@@ -73,10 +73,11 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
 
     if config.git_remote.is_some() {
         let remote_has_main = remote_has_main_branch(repo_dir)?;
-        if remote_has_main && has_local_commits(repo_dir)? {
-            if let Err(err) = run_git(repo_dir, &["pull", "--rebase", "origin", "main"]) {
-                bail!("{}", format_sync_error(repo_dir, &err.to_string()));
-            }
+        if remote_has_main
+            && has_local_commits(repo_dir)?
+            && let Err(err) = run_git(repo_dir, &["pull", "--rebase", "origin", "main"])
+        {
+            bail!("{}", format_sync_error(repo_dir, &err.to_string()));
         }
 
         if has_local_commits(repo_dir)?

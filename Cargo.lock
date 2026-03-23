@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "rupass"
-version = "1.0.11"
+version = "1.0.12"
 dependencies = [
  "anyhow",
  "argon2",
