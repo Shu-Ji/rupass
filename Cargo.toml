@@ -1,6 +1,6 @@
 [package]
 name = "rupass"
-version = "1.0.13"
+version = "1.0.14"
 edition = "2024"
 
 [dependencies]
@@ -18,3 +18,4 @@ rpassword = "7.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+time = { version = "0.3", features = ["formatting", "macros"] }

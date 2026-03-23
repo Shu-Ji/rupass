@@ -7,10 +7,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use time::format_description::FormatItem;
+use time::macros::format_description;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::storage::TeamConfig;
 
 const TEAM_METADATA_FILE: &str = ".rupass-team.json";
+const CHINA_OFFSET_HOURS: i8 = 8;
+const CHINA_DATETIME_FORMAT: &[FormatItem<'static>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct TeamMetadata {
@@ -66,7 +72,7 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
             &[
                 "commit",
                 "-m",
-                &format!("rupass sync {}", unix_timestamp()?),
+                &format!("rupass sync {}", china_standard_time_now()?),
             ],
         )?;
     }
@@ -183,11 +189,22 @@ fn run_git(repo_dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn unix_timestamp() -> Result<u64> {
-    Ok(SystemTime::now()
+fn china_standard_time_now() -> Result<String> {
+    let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system clock before unix epoch")?
-        .as_secs())
+        .as_secs() as i64;
+    format_china_standard_time(timestamp)
+}
+
+fn format_china_standard_time(unix_timestamp: i64) -> Result<String> {
+    let offset = UtcOffset::from_hms(CHINA_OFFSET_HOURS, 0, 0)
+        .context("failed to build china standard time offset")?;
+    OffsetDateTime::from_unix_timestamp(unix_timestamp)
+        .context("invalid unix timestamp")?
+        .to_offset(offset)
+        .format(CHINA_DATETIME_FORMAT)
+        .context("failed to format china standard time")
 }
 
 fn acquire_sync_lock(repo_dir: &Path) -> Result<SyncLock> {
@@ -327,6 +344,14 @@ AA store/c.json\n";
         ));
         assert!(is_rebase_conflict("could not apply 1234567"));
         assert!(!is_rebase_conflict("authentication failed"));
+    }
+
+    #[test]
+    fn formats_sync_commit_time_in_china_standard_time() {
+        assert_eq!(
+            format_china_standard_time(0).unwrap(),
+            "1970-01-01 08:00:00"
+        );
     }
 
     #[test]

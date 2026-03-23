@@ -141,6 +141,48 @@ pub(crate) fn set_secret(
     Ok(())
 }
 
+pub(crate) fn update_secret(
+    paths: &AppPaths,
+    access: &TeamAccess,
+    original_key: &str,
+    new_key: &str,
+    value: &str,
+) -> Result<()> {
+    if original_key.is_empty() || new_key.is_empty() {
+        bail!("key cannot be empty");
+    }
+
+    if original_key != new_key && paths.secret_path(&access.config.team_name, new_key).exists() {
+        bail!("target key already exists: {new_key}");
+    }
+
+    let (encrypted_key, key_nonce) = encrypt_text(&access.cipher_key, new_key)?;
+    let (encrypted_value, value_nonce) = encrypt_text(&access.cipher_key, value)?;
+    save_secret_record(
+        paths,
+        &access.config.team_name,
+        new_key,
+        &SecretRecord {
+            encrypted_key,
+            encrypted_value,
+            key_nonce,
+            value_nonce,
+        },
+    )?;
+
+    if original_key != new_key {
+        let record = load_secret_record(paths, &access.config.team_name, original_key)?;
+        verify_secret_key(&access.cipher_key, original_key, &record)?;
+        delete_secret_record(paths, &access.config.team_name, original_key)?;
+    }
+
+    sync_team_repo(
+        &paths.team_store_dir(&access.config.team_name),
+        &access.config,
+    )?;
+    Ok(())
+}
+
 pub(crate) fn delete_secret(paths: &AppPaths, access: &TeamAccess, key: &str) -> Result<()> {
     let record = load_secret_record(paths, &access.config.team_name, key)?;
     verify_secret_key(&access.cipher_key, key, &record)?;

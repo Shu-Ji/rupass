@@ -44,6 +44,29 @@ pub(crate) enum Dialog {
 pub(crate) enum PendingAction {
     SyncCurrentTeam,
     SyncAllTeams,
+    ImportTeam {
+        remote: String,
+        password: String,
+    },
+    AddSecret {
+        team: String,
+        key: String,
+        value: String,
+    },
+    EditSecret {
+        team: String,
+        original_key: String,
+        new_key: String,
+        value: String,
+    },
+    SetRemote {
+        team: String,
+        url: String,
+    },
+    DeleteSecret {
+        team: String,
+        key: String,
+    },
 }
 
 pub(crate) struct FormDialog {
@@ -60,7 +83,7 @@ pub(crate) enum FormKind {
     ImportTeam,
     UnlockTeam(String),
     AddSecret(String),
-    EditSecret(String),
+    EditSecret { team: String, original_key: String },
     SetRemote(String),
     DeleteTeam(String),
 }
@@ -306,16 +329,45 @@ impl App {
         let result = match action {
             PendingAction::SyncCurrentTeam => self.sync_current_team(),
             PendingAction::SyncAllTeams => self.sync_all_teams(),
+            PendingAction::ImportTeam { remote, password } => {
+                self.import_team_with_progress(&remote, &password)
+            }
+            PendingAction::AddSecret { team, key, value } => {
+                self.save_secret_with_progress(&team, &key, &key, &value, false)
+            }
+            PendingAction::EditSecret {
+                team,
+                original_key,
+                new_key,
+                value,
+            } => {
+                self.save_secret_with_progress(&team, &original_key, &new_key, &value, true)
+            }
+            PendingAction::SetRemote { team, url } => self.set_remote_with_progress(&team, &url),
+            PendingAction::DeleteSecret { team, key } => {
+                self.delete_secret_with_progress(&team, &key)
+            }
         };
         self.dialog = Dialog::None;
         result
     }
 
-    fn queue_sync_current_team(&mut self) {
+    pub(crate) fn queue_progress_action(
+        &mut self,
+        title: &'static str,
+        message: String,
+        action: PendingAction,
+    ) {
         if self.pending_action.is_some() {
-            self.status = "错误: 已有同步正在进行中，请等待完成".to_string();
+            self.status = "错误: 已有操作正在进行中，请等待完成".to_string();
             return;
         }
+
+        self.dialog = Dialog::Progress { title, message };
+        self.pending_action = Some(action);
+    }
+
+    fn queue_sync_current_team(&mut self) {
         let Some(access) = self.selected_access() else {
             self.status = "请先解锁团队，再执行同步".to_string();
             return;
@@ -325,21 +377,17 @@ impl App {
             return;
         }
 
-        self.dialog = Dialog::Progress {
-            title: "同步中",
-            message: format!(
+        self.queue_progress_action(
+            "同步中",
+            format!(
                 "正在同步团队 {}，完成后会自动关闭。",
                 access.config.team_name
             ),
-        };
-        self.pending_action = Some(PendingAction::SyncCurrentTeam);
+            PendingAction::SyncCurrentTeam,
+        );
     }
 
     fn queue_sync_all_teams(&mut self) {
-        if self.pending_action.is_some() {
-            self.status = "错误: 已有同步正在进行中，请等待完成".to_string();
-            return;
-        }
         if self.teams.is_empty() {
             self.status = "没有可同步的团队".to_string();
             return;
@@ -371,11 +419,11 @@ impl App {
             return;
         }
 
-        self.dialog = Dialog::Progress {
-            title: "同步中",
-            message: format!("正在同步 {ready} 个团队，完成后会自动关闭。"),
-        };
-        self.pending_action = Some(PendingAction::SyncAllTeams);
+        self.queue_progress_action(
+            "同步中",
+            format!("正在同步 {ready} 个团队，完成后会自动关闭。"),
+            PendingAction::SyncAllTeams,
+        );
     }
 }
 

@@ -121,7 +121,10 @@ impl App {
         self.dialog = Dialog::Form(FormDialog {
             title: "更新密钥",
             submit_label: "Enter 更新",
-            kind: FormKind::EditSecret(team.team_name.clone()),
+            kind: FormKind::EditSecret {
+                team: team.team_name.clone(),
+                original_key: key.to_string(),
+            },
             fields: vec![
                 InputField {
                     label: "Key",
@@ -296,31 +299,7 @@ impl App {
             FormKind::ImportTeam => {
                 let remote = dialog.fields[0].value.trim();
                 let password = dialog.fields[1].value.trim();
-                if remote.is_empty() {
-                    anyhow::bail!("remote url cannot be empty");
-                }
-                if password.is_empty() {
-                    anyhow::bail!("password cannot be empty");
-                }
-
-                let team = app::import_team(
-                    &self.paths,
-                    TeamImportArgs {
-                        args: vec![remote.to_string()],
-                        team: None,
-                        password: Some(password.to_string()),
-                    },
-                )?;
-                let access = tui_ops::open_team(&self.paths, &team, None)?;
-                self.unlocked.insert(team.clone(), access);
-                self.reload_teams()?;
-                self.team_index = self
-                    .teams
-                    .iter()
-                    .position(|item| item.team_name == team)
-                    .unwrap_or(0);
-                self.status = format!("已导入团队: {team}");
-                Ok(())
+                self.queue_import_team(remote, password)
             }
             FormKind::UnlockTeam(team) => {
                 let access = tui_ops::unlock_team(&self.paths, team, &dialog.fields[0].value)?;
@@ -330,50 +309,37 @@ impl App {
                 Ok(())
             }
             FormKind::AddSecret(team) => {
-                let Some(access) = self.unlocked.get(team).cloned() else {
+                if !self.unlocked.contains_key(team) {
                     self.status = format!("请先解锁团队: {team}");
                     return Ok(());
-                };
+                }
                 let key = dialog.fields[0].value.trim();
                 let value = &dialog.fields[1].value;
                 if key.is_empty() {
                     anyhow::bail!("key cannot be empty");
                 }
-                tui_ops::set_secret(&self.paths, &access, key, value)?;
-                self.reload_keys()?;
-                if let Page::TeamDetail { key_index, .. } = &mut self.page {
-                    *key_index = self.keys.iter().position(|item| item == key).unwrap_or(0);
-                }
-                self.status = format!("已新增 key: {key}");
+                self.queue_add_secret(team, key, value)?;
                 Ok(())
             }
-            FormKind::EditSecret(team) => {
-                let Some(access) = self.unlocked.get(team).cloned() else {
+            FormKind::EditSecret { team, original_key } => {
+                if !self.unlocked.contains_key(team) {
                     self.status = format!("请先解锁团队: {team}");
                     return Ok(());
-                };
+                }
                 let key = dialog.fields[0].value.trim();
                 let value = &dialog.fields[1].value;
                 if key.is_empty() {
                     anyhow::bail!("key cannot be empty");
                 }
-                tui_ops::set_secret(&self.paths, &access, key, value)?;
-                self.reload_keys()?;
-                if let Page::TeamDetail { key_index, .. } = &mut self.page {
-                    *key_index = self.keys.iter().position(|item| item == key).unwrap_or(0);
-                }
-                self.status = format!("已更新 key: {key}");
+                self.queue_edit_secret(team, original_key, key, value)?;
                 Ok(())
             }
             FormKind::SetRemote(team) => {
-                let Some(access) = self.unlocked.get(team).cloned() else {
+                if !self.unlocked.contains_key(team) {
                     self.status = format!("请先解锁团队: {team}");
                     return Ok(());
-                };
-                let updated = tui_ops::set_remote(&self.paths, &access, &dialog.fields[0].value)?;
-                self.unlocked.insert(team.clone(), updated);
-                self.reload_teams()?;
-                self.status = format!("已更新远程: {team}");
+                }
+                self.queue_set_remote(team, &dialog.fields[0].value)?;
                 Ok(())
             }
             FormKind::DeleteTeam(team) => {
@@ -401,15 +367,175 @@ impl App {
         };
         let team = team.clone();
         let key = key.clone();
-        let Some(access) = self.unlocked.get(&team).cloned() else {
+        if !self.unlocked.contains_key(&team) {
             self.status = format!("请先解锁团队: {team}");
             self.dialog = Dialog::None;
             return Ok(());
+        }
+        self.queue_delete_secret(&team, &key);
+        Ok(())
+    }
+
+    fn queue_import_team(&mut self, remote: &str, password: &str) -> Result<()> {
+        if remote.is_empty() {
+            anyhow::bail!("remote url cannot be empty");
+        }
+        if password.is_empty() {
+            anyhow::bail!("password cannot be empty");
+        }
+
+        self.queue_progress_action(
+            "导入中",
+            "正在导入团队并同步远程元数据，完成后会自动关闭。".to_string(),
+            crate::tui_app::PendingAction::ImportTeam {
+                remote: remote.to_string(),
+                password: password.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_add_secret(&mut self, team: &str, key: &str, value: &str) -> Result<()> {
+        self.queue_progress_action(
+            "保存中",
+            format!("正在新增 key {key} 并同步团队 {team}，完成后会自动关闭。"),
+            crate::tui_app::PendingAction::AddSecret {
+                team: team.to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_edit_secret(
+        &mut self,
+        team: &str,
+        original_key: &str,
+        new_key: &str,
+        value: &str,
+    ) -> Result<()> {
+        let action_text = if original_key == new_key {
+            format!("正在更新 key {new_key} 并同步团队 {team}，完成后会自动关闭。")
+        } else {
+            format!(
+                "正在将 key {original_key} 重命名为 {new_key} 并同步团队 {team}，完成后会自动关闭。"
+            )
         };
-        tui_ops::delete_secret(&self.paths, &access, &key)?;
+        self.queue_progress_action(
+            "保存中",
+            action_text,
+            crate::tui_app::PendingAction::EditSecret {
+                team: team.to_string(),
+                original_key: original_key.to_string(),
+                new_key: new_key.to_string(),
+                value: value.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_set_remote(&mut self, team: &str, url: &str) -> Result<()> {
+        self.queue_progress_action(
+            "更新中",
+            format!("正在更新团队 {team} 的远程仓库并执行同步，完成后会自动关闭。"),
+            crate::tui_app::PendingAction::SetRemote {
+                team: team.to_string(),
+                url: url.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_delete_secret(&mut self, team: &str, key: &str) {
+        self.queue_progress_action(
+            "删除中",
+            format!("正在删除 key {key} 并同步团队 {team}，完成后会自动关闭。"),
+            crate::tui_app::PendingAction::DeleteSecret {
+                team: team.to_string(),
+                key: key.to_string(),
+            },
+        );
+    }
+
+    pub(crate) fn import_team_with_progress(&mut self, remote: &str, password: &str) -> Result<()> {
+        let team = app::import_team(
+            &self.paths,
+            TeamImportArgs {
+                args: vec![remote.to_string()],
+                team: None,
+                password: Some(password.to_string()),
+            },
+        )?;
+        let access = tui_ops::open_team(&self.paths, &team, None)?;
+        self.unlocked.insert(team.clone(), access);
+        self.reload_teams()?;
+        self.team_index = self
+            .teams
+            .iter()
+            .position(|item| item.team_name == team)
+            .unwrap_or(0);
+        self.status = format!("已导入团队: {team}");
+        Ok(())
+    }
+
+    pub(crate) fn save_secret_with_progress(
+        &mut self,
+        team: &str,
+        original_key: &str,
+        new_key: &str,
+        value: &str,
+        is_edit: bool,
+    ) -> Result<()> {
+        let Some(access) = self.unlocked.get(team).cloned() else {
+            self.status = format!("请先解锁团队: {team}");
+            return Ok(());
+        };
+        if is_edit {
+            tui_ops::update_secret(&self.paths, &access, original_key, new_key, value)?;
+        } else {
+            tui_ops::set_secret(&self.paths, &access, new_key, value)?;
+        }
+        self.reload_keys()?;
+        if let Page::TeamDetail { key_index, .. } = &mut self.page {
+            *key_index = self
+                .keys
+                .iter()
+                .position(|item| item == new_key)
+                .unwrap_or(0);
+        }
+        self.status = if is_edit {
+            if original_key == new_key {
+                format!("已更新 key: {new_key}")
+            } else {
+                format!("已重命名 key: {original_key} -> {new_key}")
+            }
+        } else {
+            format!("已新增 key: {new_key}")
+        };
+        Ok(())
+    }
+
+    pub(crate) fn set_remote_with_progress(&mut self, team: &str, url: &str) -> Result<()> {
+        let Some(access) = self.unlocked.get(team).cloned() else {
+            self.status = format!("请先解锁团队: {team}");
+            return Ok(());
+        };
+        let updated = tui_ops::set_remote(&self.paths, &access, url)?;
+        self.unlocked.insert(team.to_string(), updated);
+        self.reload_teams()?;
+        self.status = format!("已更新远程: {team}");
+        Ok(())
+    }
+
+    pub(crate) fn delete_secret_with_progress(&mut self, team: &str, key: &str) -> Result<()> {
+        let Some(access) = self.unlocked.get(team).cloned() else {
+            self.status = format!("请先解锁团队: {team}");
+            return Ok(());
+        };
+        tui_ops::delete_secret(&self.paths, &access, key)?;
         self.reload_keys()?;
         self.status = format!("已删除 key: {key}");
-        self.dialog = Dialog::None;
         Ok(())
     }
 }
@@ -495,11 +621,130 @@ mod tests {
         dialog.fields[1].value = "secret".to_string();
 
         app.submit_form().unwrap();
+        assert!(matches!(
+            app.dialog,
+            Dialog::Progress { title: "导入中", .. }
+        ));
+        assert!(matches!(
+            app.pending_action,
+            Some(crate::tui_app::PendingAction::ImportTeam { .. })
+        ));
+
+        app.run_pending_action().unwrap();
 
         assert_eq!(app.teams.len(), 1);
         assert_eq!(app.teams[0].team_name, "dev_team");
         assert!(app.unlocked.contains_key("dev_team"));
         assert!(matches!(app.dialog, Dialog::None));
         assert_eq!(app.status, "已导入团队: dev_team");
+    }
+
+    #[test]
+    fn add_secret_from_form_shows_progress_before_running() {
+        let paths = test_paths();
+        paths.ensure_base_dirs().unwrap();
+        let mut app = App::new(paths).unwrap();
+        let access = tui_ops::create_team(&app.paths, "dev_team", "secret", "secret").unwrap();
+        app.unlocked.insert("dev_team".to_string(), access);
+        app.reload_teams().unwrap();
+        app.page = Page::TeamDetail {
+            team_name: "dev_team".to_string(),
+            key_index: 0,
+        };
+
+        app.open_add_secret();
+        let Dialog::Form(dialog) = &mut app.dialog else {
+            panic!("expected form dialog");
+        };
+        dialog.fields[0].value = "db_password".to_string();
+        dialog.fields[1].value = "hello123".to_string();
+
+        app.submit_form().unwrap();
+        assert!(matches!(
+            app.dialog,
+            Dialog::Progress { title: "保存中", .. }
+        ));
+        assert!(matches!(
+            app.pending_action,
+            Some(crate::tui_app::PendingAction::AddSecret { .. })
+        ));
+
+        app.run_pending_action().unwrap();
+
+        assert_eq!(tui_ops::get_secret(&app.paths, "dev_team", "db_password").unwrap(), "hello123");
+        assert_eq!(app.status, "已新增 key: db_password");
+    }
+
+    #[test]
+    fn delete_key_confirmation_shows_progress_before_running() {
+        let paths = test_paths();
+        paths.ensure_base_dirs().unwrap();
+        let mut app = App::new(paths).unwrap();
+        let access = tui_ops::create_team(&app.paths, "dev_team", "secret", "secret").unwrap();
+        tui_ops::set_secret(&app.paths, &access, "db_password", "hello123").unwrap();
+        app.unlocked.insert("dev_team".to_string(), access);
+        app.reload_teams().unwrap();
+        app.page = Page::TeamDetail {
+            team_name: "dev_team".to_string(),
+            key_index: 0,
+        };
+        app.reload_keys().unwrap();
+        app.dialog = Dialog::ConfirmDeleteKey {
+            team: "dev_team".to_string(),
+            key: "db_password".to_string(),
+        };
+
+        app.confirm_delete_key().unwrap();
+        assert!(matches!(
+            app.dialog,
+            Dialog::Progress { title: "删除中", .. }
+        ));
+        assert!(matches!(
+            app.pending_action,
+            Some(crate::tui_app::PendingAction::DeleteSecret { .. })
+        ));
+
+        app.run_pending_action().unwrap();
+
+        assert!(tui_ops::get_secret(&app.paths, "dev_team", "db_password").is_err());
+        assert_eq!(app.status, "已删除 key: db_password");
+    }
+
+    #[test]
+    fn edit_secret_can_rename_key() {
+        let paths = test_paths();
+        paths.ensure_base_dirs().unwrap();
+        let mut app = App::new(paths).unwrap();
+        let access = tui_ops::create_team(&app.paths, "dev_team", "secret", "secret").unwrap();
+        tui_ops::set_secret(&app.paths, &access, "db_password", "hello123").unwrap();
+        app.unlocked.insert("dev_team".to_string(), access);
+        app.reload_teams().unwrap();
+        app.page = Page::TeamDetail {
+            team_name: "dev_team".to_string(),
+            key_index: 0,
+        };
+        app.reload_keys().unwrap();
+
+        app.open_edit_secret().unwrap();
+        let Dialog::Form(dialog) = &mut app.dialog else {
+            panic!("expected form dialog");
+        };
+        dialog.fields[0].value = "db_password_v2".to_string();
+        dialog.fields[1].value = "hello456".to_string();
+
+        app.submit_form().unwrap();
+        assert!(matches!(
+            app.pending_action,
+            Some(crate::tui_app::PendingAction::EditSecret { .. })
+        ));
+
+        app.run_pending_action().unwrap();
+
+        assert!(tui_ops::get_secret(&app.paths, "dev_team", "db_password").is_err());
+        assert_eq!(
+            tui_ops::get_secret(&app.paths, "dev_team", "db_password_v2").unwrap(),
+            "hello456"
+        );
+        assert_eq!(app.status, "已重命名 key: db_password -> db_password_v2");
     }
 }

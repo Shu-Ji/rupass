@@ -356,7 +356,7 @@ fn render_progress_dialog(frame: &mut Frame, title: &'static str, message: &str)
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "请稍候，正在执行同步操作…",
+                "请稍候，正在执行操作…",
                 primary_style().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
