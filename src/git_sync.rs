@@ -14,18 +14,26 @@ use crate::storage::{TeamConfig, TeamMetadata};
 
 const TEAM_METADATA_FILE: &str = "rupass-team.json";
 const LEGACY_TEAM_METADATA_FILE: &str = ".rupass-team.json";
+const LOCAL_ONLY_FILES: &[&str] = &[
+    "rupass-s3-state.json",
+    ".rupass-s3-state.json",
+    "rupass-manifest.json",
+    ".rupass-manifest.json",
+];
 const CHINA_OFFSET_HOURS: i8 = 8;
 const CHINA_DATETIME_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 pub(crate) fn ensure_git_repo(repo_dir: &Path) -> Result<()> {
     if repo_dir.join(".git").exists() {
+        ensure_git_local_excludes(repo_dir)?;
         return Ok(());
     }
 
     fs::create_dir_all(repo_dir)
         .with_context(|| format!("failed to create repo dir {}", repo_dir.display()))?;
     run_git(repo_dir, &["init", "-b", "main"])?;
+    ensure_git_local_excludes(repo_dir)?;
     Ok(())
 }
 
@@ -51,6 +59,7 @@ pub(crate) fn load_team_metadata(repo_dir: &Path) -> Result<TeamMetadata> {
 pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
     let _lock = acquire_sync_lock(repo_dir)?;
     ensure_git_repo(repo_dir)?;
+    cleanup_local_only_files(repo_dir)?;
 
     if let Some(remote) = &config.git_remote {
         bootstrap_team_repo(repo_dir, remote)?;
@@ -268,6 +277,60 @@ fn acquire_sync_lock(repo_dir: &Path) -> Result<SyncLock> {
             Err(err).with_context(|| format!("failed to create sync lock {}", lock_path.display()))
         }
     }
+}
+
+fn cleanup_local_only_files(repo_dir: &Path) -> Result<()> {
+    for file_name in LOCAL_ONLY_FILES {
+        let path = repo_dir.join(file_name);
+        if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("rupass-manifest.json" | ".rupass-manifest.json")
+        ) && path.exists()
+        {
+            fs::remove_file(&path).with_context(|| {
+                format!("failed to remove local-only file {}", path.display())
+            })?;
+        }
+    }
+
+    for file_name in LOCAL_ONLY_FILES {
+        let _ = run_git(repo_dir, &["rm", "--cached", "--ignore-unmatch", "--", file_name]);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn ensure_git_local_excludes(repo_dir: &Path) -> Result<()> {
+    let git_dir = repo_dir.join(".git");
+    if !git_dir.exists() {
+        return Ok(());
+    }
+    let exclude_path = repo_dir.join(".git").join("info").join("exclude");
+    let existing = if exclude_path.exists() {
+        fs::read_to_string(&exclude_path)
+            .with_context(|| format!("failed to read {}", exclude_path.display()))?
+    } else {
+        String::new()
+    };
+
+    let mut content = existing;
+    let mut changed = false;
+    for file_name in LOCAL_ONLY_FILES {
+        if !content.lines().any(|line| line.trim() == *file_name) {
+            if !content.ends_with('\n') && !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(file_name);
+            content.push('\n');
+            changed = true;
+        }
+    }
+
+    if changed {
+        fs::write(&exclude_path, content)
+            .with_context(|| format!("failed to write {}", exclude_path.display()))?;
+    }
+    Ok(())
 }
 
 fn sync_lock_path(repo_dir: &Path) -> Result<std::path::PathBuf> {

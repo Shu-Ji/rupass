@@ -60,7 +60,7 @@ pub(crate) fn sync_team_store(repo_dir: &Path, config: &TeamConfig) -> Result<()
     let client = S3Client::new(s3, config.team_name.clone())?;
     let local_manifest = scan_local_manifest(repo_dir)?;
     let remote_manifest = normalize_manifest(client.get_manifest()?);
-    let state = read_local_state(repo_dir)?;
+    let state = read_local_state(repo_dir, &config.team_name)?;
 
     if state.files.is_empty() {
         initial_sync(&client, repo_dir, &local_manifest, &remote_manifest)?;
@@ -70,7 +70,7 @@ pub(crate) fn sync_team_store(repo_dir: &Path, config: &TeamConfig) -> Result<()
 
     let final_manifest = scan_local_manifest(repo_dir)?;
     client.put_manifest(&final_manifest)?;
-    write_local_state(repo_dir, &final_manifest)?;
+    write_local_state(repo_dir, &config.team_name, &final_manifest)?;
     cleanup_local_internal_files(repo_dir)?;
     Ok(())
 }
@@ -313,10 +313,17 @@ fn manifest_entry_for_path(path: &Path) -> Result<ManifestEntry> {
     })
 }
 
-fn read_local_state(repo_dir: &Path) -> Result<Manifest> {
-    let path = repo_dir.join(LOCAL_STATE_FILE);
+fn read_local_state(repo_dir: &Path, team_name: &str) -> Result<Manifest> {
+    let path = external_local_state_path(repo_dir, team_name)?;
     if path.exists() {
         return read_json(&path);
+    }
+    let legacy_path = repo_dir.join(LOCAL_STATE_FILE);
+    if legacy_path.exists() {
+        let manifest: Manifest = read_json(&legacy_path)?;
+        write_json(&path, &manifest)?;
+        let _ = fs::remove_file(&legacy_path);
+        return Ok(manifest);
     }
     let legacy_path = repo_dir.join(LEGACY_LOCAL_STATE_FILE);
     if legacy_path.exists() {
@@ -328,18 +335,27 @@ fn read_local_state(repo_dir: &Path) -> Result<Manifest> {
     Ok(Manifest::default())
 }
 
-fn write_local_state(repo_dir: &Path, manifest: &Manifest) -> Result<()> {
-    let path = repo_dir.join(LOCAL_STATE_FILE);
+fn write_local_state(repo_dir: &Path, team_name: &str, manifest: &Manifest) -> Result<()> {
+    let path = external_local_state_path(repo_dir, team_name)?;
     write_json(&path, manifest)?;
-    let legacy_path = repo_dir.join(LEGACY_LOCAL_STATE_FILE);
-    if legacy_path.exists() {
-        let _ = fs::remove_file(legacy_path);
+    for legacy_path in [
+        repo_dir.join(LOCAL_STATE_FILE),
+        repo_dir.join(LEGACY_LOCAL_STATE_FILE),
+    ] {
+        if legacy_path.exists() {
+            let _ = fs::remove_file(legacy_path);
+        }
     }
     Ok(())
 }
 
 fn cleanup_local_internal_files(repo_dir: &Path) -> Result<()> {
-    for file_name in [REMOTE_MANIFEST_FILE, LEGACY_REMOTE_MANIFEST_FILE] {
+    for file_name in [
+        REMOTE_MANIFEST_FILE,
+        LEGACY_REMOTE_MANIFEST_FILE,
+        LOCAL_STATE_FILE,
+        LEGACY_LOCAL_STATE_FILE,
+    ] {
         let path = repo_dir.join(file_name);
         if path.exists() {
             fs::remove_file(&path)
@@ -397,6 +413,19 @@ fn path_to_key(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy().to_string())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn external_local_state_path(repo_dir: &Path, team_name: &str) -> Result<std::path::PathBuf> {
+    let Some(store_dir) = repo_dir.parent() else {
+        bail!("invalid repo dir: {}", repo_dir.display());
+    };
+    let Some(base_dir) = store_dir.parent() else {
+        bail!("invalid repo dir: {}", repo_dir.display());
+    };
+    Ok(base_dir
+        .join("state")
+        .join("s3")
+        .join(format!("{team_name}.json")))
 }
 
 struct S3Client {
