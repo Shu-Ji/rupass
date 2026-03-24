@@ -164,7 +164,7 @@ impl App {
             return;
         }
         self.dialog = Dialog::Form(FormDialog {
-            title: "设置 Git 远程仓库",
+            title: "设置或清空 Git 远程",
             submit_label: "Enter 保存",
             kind: FormKind::SetRemote(team.team_name.clone()),
             fields: vec![InputField {

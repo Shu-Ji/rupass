@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::tui_app::{App, Dialog, FormDialog, Page};
+use crate::tui_app::{App, Dialog, FormDialog, FormKind, Page};
 use crate::tui_style::{
     accent_style, action_line, danger_style, muted, primary_style, section_style,
     split_status_lines, status_style, success_style,
@@ -250,13 +250,6 @@ fn help_panel(app: &App) -> Paragraph<'static> {
 }
 
 fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
-    let height = (dialog.fields.len() as u16) * 3 + 6;
-    let area = popup_area(
-        frame.area(),
-        64,
-        height.min(frame.area().height.saturating_sub(2)),
-    );
-    frame.render_widget(Clear, area);
     let mut lines = Vec::new();
     for (index, field) in dialog.fields.iter().enumerate() {
         let marker = if index == dialog.index { "›" } else { " " };
@@ -291,13 +284,30 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
         ]));
         lines.push(Line::from(""));
     }
+    lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("提交: ", muted()),
-        Span::styled(
-            dialog.submit_label,
-            primary_style().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("操作: ", muted()),
+        Span::styled("Enter", primary_style().add_modifier(Modifier::BOLD)),
+        Span::raw(format!(" {}", dialog.submit_label.trim_start_matches("Enter "))),
+        Span::raw("  ·  "),
+        Span::styled("Esc", primary_style().add_modifier(Modifier::BOLD)),
+        Span::raw(" 取消"),
     ]));
+    if matches!(dialog.kind, FormKind::SetRemote(_)) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("提示: ", muted()),
+            Span::styled("Ctrl+X 一键清空，或手动留空后回车", accent_style()),
+        ]));
+    }
+    if matches!(dialog.kind, FormKind::SetRemote(_) | FormKind::SetS3(_)) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("清空: ", muted()),
+            Span::styled("Ctrl+X", primary_style().add_modifier(Modifier::BOLD)),
+            Span::raw(" 一键清空当前配置"),
+        ]));
+    }
     if dialog.fields.iter().any(|field| field.options.is_some()) {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -314,6 +324,14 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
             danger_style().add_modifier(Modifier::BOLD),
         )));
     }
+    let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+    let width = if matches!(dialog.kind, FormKind::SetS3(_)) {
+        82
+    } else {
+        72
+    };
+    let area = popup_area(frame.area(), width, height);
+    frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .block(block(dialog.title, true))
@@ -492,6 +510,7 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("c", "创建团队", primary_style()),
             action_line("u", "解锁团队", accent_style()),
             action_line("r", "选择 Git/S3 同步", accent_style()),
+            action_line("g", "设置/清空 Git 远程", accent_style()),
             action_line("3", "设置 S3 远程", accent_style()),
             action_line("s", "同步全部团队", success_style()),
             action_line("x", "删除当前团队", danger_style()),
@@ -503,6 +522,7 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("e", "更新 key", accent_style()),
             action_line("d", "删除当前 key", danger_style()),
             action_line("r", "选择 Git/S3 同步", accent_style()),
+            action_line("g", "设置/清空 Git 远程", accent_style()),
             action_line("s", "同步当前团队", success_style()),
             action_line("3", "设置 S3 远程", accent_style()),
             action_line("u", "解锁当前团队", accent_style()),

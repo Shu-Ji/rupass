@@ -194,6 +194,7 @@ impl App {
             KeyCode::Char('i') => self.open_import_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Char('r') => self.open_choose_sync_backend(),
+            KeyCode::Char('g') => self.open_set_remote(),
             KeyCode::Char('3') => self.open_set_s3(),
             KeyCode::Char('s') => self.queue_sync_all_teams(),
             KeyCode::Char('x') => self.open_delete_team(),
@@ -212,6 +213,7 @@ impl App {
             KeyCode::Char('d') => self.open_delete_key(),
             KeyCode::Char('s') => self.queue_sync_current_team(),
             KeyCode::Char('r') => self.open_choose_sync_backend(),
+            KeyCode::Char('g') => self.open_set_remote(),
             KeyCode::Char('3') => self.open_set_s3(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Esc => self.back_to_team_list(),
@@ -225,6 +227,8 @@ impl App {
             return Ok(false);
         };
         let is_select_field = dialog.fields[dialog.index].options.is_some();
+        let is_clear_action = key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'));
         match key.code {
             KeyCode::Esc => self.dialog = Dialog::None,
             KeyCode::Tab => dialog.index = (dialog.index + 1) % dialog.fields.len(),
@@ -263,6 +267,15 @@ impl App {
                 }
             }
             KeyCode::Char(ch) => {
+                if is_clear_action {
+                    if matches!(dialog.kind, FormKind::SetRemote(_) | FormKind::SetS3(_)) {
+                        for field in &mut dialog.fields {
+                            field.value.clear();
+                        }
+                        dialog.error = None;
+                    }
+                    return Ok(false);
+                }
                 if is_select_field {
                     return Ok(false);
                 }
