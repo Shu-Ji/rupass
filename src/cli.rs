@@ -33,6 +33,7 @@ pub(crate) struct TeamCommandInput {
         "  rupass team create my_team --password secret\n",
         "  rupass team import git@github.com:org/repo.git --password secret\n",
         "  rupass team set-remote my_team git@github.com:org/repo.git\n",
+        "  rupass team set-s3 my_team --endpoint https://s3.example.com --region us-east-1 --bucket my-bucket --access-key-id AKIA... --secret-access-key xxxx --root team\n",
         "  rupass sync-all\n",
         "\n",
         "默认团队示例（本地仅有一个团队时）:\n",
@@ -70,7 +71,7 @@ pub(crate) enum Commands {
     #[command(
         name = "team",
         about = "团队管理命令",
-        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import git@github.com:org/repo.git --password secret\n  rupass team set-remote my_team git@github.com:org/repo.git"
+        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import git@github.com:org/repo.git --password secret\n  rupass team set-remote my_team git@github.com:org/repo.git\n  rupass team set-s3 my_team --endpoint https://s3.example.com --region us-east-1 --bucket my-bucket --access-key-id AKIA... --secret-access-key xxxx --root team"
     )]
     Team {
         #[command(subcommand)]
@@ -92,6 +93,10 @@ pub(crate) enum TeamCommands {
     SetRemote(TeamSetRemoteArgs),
     #[command(about = "清空团队远程仓库")]
     ClearRemote(TeamPasswordTargetArgs),
+    #[command(about = "设置团队 S3 远程")]
+    SetS3(TeamSetS3Args),
+    #[command(about = "清空团队 S3 远程")]
+    ClearS3(TeamClearS3Args),
     #[command(about = "同步指定团队")]
     Sync(TeamPasswordTargetArgs),
 }
@@ -133,6 +138,36 @@ pub(crate) struct TeamSetRemoteArgs {
     pub(crate) team: String,
     #[arg(help = "远程仓库地址")]
     pub(crate) url: String,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamSetS3Args {
+    #[arg(help = "团队英文名，必须以 _team 结尾")]
+    pub(crate) team: String,
+    #[arg(long, help = "S3 endpoint，例如 https://s3.example.com")]
+    pub(crate) endpoint: String,
+    #[arg(long, help = "S3 region，例如 us-east-1")]
+    pub(crate) region: String,
+    #[arg(long, help = "S3 bucket")]
+    pub(crate) bucket: String,
+    #[arg(long = "access-key-id", help = "S3 access key id")]
+    pub(crate) access_key_id: String,
+    #[arg(long = "secret-access-key", help = "S3 secret access key")]
+    pub(crate) secret_access_key: String,
+    #[arg(long, help = "S3 root prefix，可选")]
+    pub(crate) root: Option<String>,
+    #[arg(long, default_value_t = true, help = "是否使用 path-style 访问")]
+    pub(crate) force_path_style: bool,
+    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamClearS3Args {
+    #[arg(help = "团队英文名，必须以 _team 结尾")]
+    pub(crate) team: String,
     #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
     pub(crate) password: Option<String>,
 }

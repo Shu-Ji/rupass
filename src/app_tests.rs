@@ -22,6 +22,8 @@ fn test_config(team_name: &str) -> TeamConfig {
         password_verifier: "verifier".to_string(),
         cipher_key: None,
         git_remote: None,
+        s3: None,
+        sync_backend: None,
     }
 }
 
@@ -57,7 +59,7 @@ fn init_remote_repo(team_name: &str, password: &str) -> (std::path::PathBuf, [u8
         "password_verifier": STANDARD.encode(password_verifier(&key)),
     });
     fs::write(
-        repo_dir.join(".rupass-team.json"),
+        repo_dir.join("rupass-team.json"),
         serde_json::to_vec_pretty(&metadata).unwrap(),
     )
     .unwrap();
@@ -128,6 +130,8 @@ fn unlock_uses_stored_cipher_key_without_password() {
             password_verifier: "verifier".to_string(),
             cipher_key: Some(STANDARD.encode(key)),
             git_remote: None,
+            s3: None,
+            sync_backend: None,
         },
     )
     .unwrap();
@@ -151,6 +155,8 @@ fn authenticate_requires_valid_password() {
             password_verifier: STANDARD.encode(password_verifier(&key)),
             cipher_key: Some(STANDARD.encode(key)),
             git_remote: None,
+            s3: None,
+            sync_backend: None,
         },
     )
     .unwrap();
@@ -192,7 +198,7 @@ fn imports_team_from_remote_metadata() {
     assert!(
         paths
             .team_store_dir("dev_team")
-            .join(".rupass-team.json")
+            .join("rupass-team.json")
             .exists()
     );
 }

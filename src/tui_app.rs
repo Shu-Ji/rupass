@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::storage::AppPaths;
+use crate::storage::{AppPaths, SyncBackend, TeamS3Config};
 use crate::tui_ops::{self, TeamAccess, TeamSummary};
 
 pub(crate) struct App {
@@ -63,6 +63,14 @@ pub(crate) enum PendingAction {
         team: String,
         url: String,
     },
+    SetS3 {
+        team: String,
+        config: Option<TeamS3Config>,
+    },
+    SetSyncBackend {
+        team: String,
+        backend: SyncBackend,
+    },
     DeleteSecret {
         team: String,
         key: String,
@@ -84,7 +92,9 @@ pub(crate) enum FormKind {
     UnlockTeam(String),
     AddSecret(String),
     EditSecret { team: String, original_key: String },
+    ChooseSyncBackend(String),
     SetRemote(String),
+    SetS3(String),
     DeleteTeam(String),
 }
 
@@ -92,6 +102,7 @@ pub(crate) struct InputField {
     pub(crate) label: &'static str,
     pub(crate) value: String,
     pub(crate) secret: bool,
+    pub(crate) options: Option<Vec<&'static str>>,
 }
 
 impl App {
@@ -182,7 +193,8 @@ impl App {
             KeyCode::Char('c') => self.open_create_team(),
             KeyCode::Char('i') => self.open_import_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
-            KeyCode::Char('r') => self.open_set_remote(),
+            KeyCode::Char('r') => self.open_choose_sync_backend(),
+            KeyCode::Char('3') => self.open_set_s3(),
             KeyCode::Char('s') => self.queue_sync_all_teams(),
             KeyCode::Char('x') => self.open_delete_team(),
             _ => {}
@@ -199,6 +211,8 @@ impl App {
             KeyCode::Char('e') => self.open_edit_secret()?,
             KeyCode::Char('d') => self.open_delete_key(),
             KeyCode::Char('s') => self.queue_sync_current_team(),
+            KeyCode::Char('r') => self.open_choose_sync_backend(),
+            KeyCode::Char('3') => self.open_set_s3(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Esc => self.back_to_team_list(),
             _ => {}
@@ -210,21 +224,48 @@ impl App {
         let Dialog::Form(dialog) = &mut self.dialog else {
             return Ok(false);
         };
+        let is_select_field = dialog.fields[dialog.index].options.is_some();
         match key.code {
             KeyCode::Esc => self.dialog = Dialog::None,
-            KeyCode::Tab | KeyCode::Down => dialog.index = (dialog.index + 1) % dialog.fields.len(),
-            KeyCode::Up => {
-                dialog.index = if dialog.index == 0 {
-                    dialog.fields.len() - 1
+            KeyCode::Tab => dialog.index = (dialog.index + 1) % dialog.fields.len(),
+            KeyCode::Down => {
+                if is_select_field {
+                    cycle_field_option(&mut dialog.fields[dialog.index], 1);
                 } else {
-                    dialog.index - 1
-                };
+                    dialog.index = (dialog.index + 1) % dialog.fields.len();
+                }
+            }
+            KeyCode::Up => {
+                if is_select_field {
+                    cycle_field_option(&mut dialog.fields[dialog.index], -1);
+                } else {
+                    dialog.index = if dialog.index == 0 {
+                        dialog.fields.len() - 1
+                    } else {
+                        dialog.index - 1
+                    };
+                }
             }
             KeyCode::Backspace => {
-                dialog.fields[dialog.index].value.pop();
+                if dialog.fields[dialog.index].options.is_none() {
+                    dialog.fields[dialog.index].value.pop();
+                }
             }
             KeyCode::Enter => self.submit_form()?,
+            KeyCode::Left => {
+                if is_select_field {
+                    cycle_field_option(&mut dialog.fields[dialog.index], -1);
+                }
+            }
+            KeyCode::Right => {
+                if is_select_field {
+                    cycle_field_option(&mut dialog.fields[dialog.index], 1);
+                }
+            }
             KeyCode::Char(ch) => {
+                if is_select_field {
+                    return Ok(false);
+                }
                 if key
                     .modifiers
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -340,10 +381,12 @@ impl App {
                 original_key,
                 new_key,
                 value,
-            } => {
-                self.save_secret_with_progress(&team, &original_key, &new_key, &value, true)
-            }
+            } => self.save_secret_with_progress(&team, &original_key, &new_key, &value, true),
             PendingAction::SetRemote { team, url } => self.set_remote_with_progress(&team, &url),
+            PendingAction::SetS3 { team, config } => self.set_s3_with_progress(&team, config),
+            PendingAction::SetSyncBackend { team, backend } => {
+                self.set_sync_backend_with_progress(&team, backend)
+            }
             PendingAction::DeleteSecret { team, key } => {
                 self.delete_secret_with_progress(&team, &key)
             }
@@ -372,8 +415,8 @@ impl App {
             self.status = "请先解锁团队，再执行同步".to_string();
             return;
         };
-        if access.config.git_remote.is_none() {
-            self.status = format!("错误: 团队未配置远程仓库: {}", access.config.team_name);
+        if !access.config.has_remote() {
+            self.status = format!("错误: 团队未配置远程: {}", access.config.team_name);
             return;
         }
 
@@ -407,7 +450,7 @@ impl App {
         let ready = self
             .teams
             .iter()
-            .filter(|team| team.git_remote.is_some())
+            .filter(|team| team.sync_backend.is_some())
             .count();
         if ready == 0 {
             let names = self
@@ -415,7 +458,7 @@ impl App {
                 .iter()
                 .map(|team| team.team_name.clone())
                 .collect::<Vec<_>>();
-            self.status = format!("错误: 没有已配置远程仓库的团队: {}", names.join(", "));
+            self.status = format!("错误: 没有已配置远程的团队: {}", names.join(", "));
             return;
         }
 
@@ -429,4 +472,19 @@ impl App {
 
 fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
     (((current as isize + delta).rem_euclid(len as isize)) as usize).min(len - 1)
+}
+
+fn cycle_field_option(field: &mut InputField, delta: isize) {
+    let Some(options) = field.options.as_ref() else {
+        return;
+    };
+    if options.is_empty() {
+        return;
+    }
+    let current_index = options
+        .iter()
+        .position(|option| *option == field.value)
+        .unwrap_or(0);
+    let next_index = wrap_index(current_index, options.len(), delta);
+    field.value = options[next_index].to_string();
 }

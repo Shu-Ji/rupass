@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::app;
 use crate::cli::TeamImportArgs;
+use crate::storage::{SyncBackend, TeamS3Config};
 use crate::tui_app::{App, Dialog, FormDialog, FormKind, InputField, Page};
 use crate::tui_ops;
 
@@ -16,16 +17,19 @@ impl App {
                     label: "团队名",
                     value: String::new(),
                     secret: false,
+                    options: None,
                 },
                 InputField {
                     label: "密码",
                     value: String::new(),
                     secret: true,
+                    options: None,
                 },
                 InputField {
                     label: "确认密码",
                     value: String::new(),
                     secret: true,
+                    options: None,
                 },
             ],
             index: 0,
@@ -43,11 +47,13 @@ impl App {
                     label: "Remote URL",
                     value: String::new(),
                     secret: false,
+                    options: None,
                 },
                 InputField {
                     label: "密码",
                     value: String::new(),
                     secret: true,
+                    options: None,
                 },
             ],
             index: 0,
@@ -68,6 +74,7 @@ impl App {
                 label: "密码",
                 value: String::new(),
                 secret: true,
+                options: None,
             }],
             index: 0,
             error: None,
@@ -92,11 +99,13 @@ impl App {
                     label: "Key",
                     value: String::new(),
                     secret: false,
+                    options: None,
                 },
                 InputField {
                     label: "Value",
                     value: String::new(),
                     secret: false,
+                    options: None,
                 },
             ],
             index: 0,
@@ -130,11 +139,13 @@ impl App {
                     label: "Key",
                     value: key.to_string(),
                     secret: false,
+                    options: None,
                 },
                 InputField {
                     label: "Value",
                     value,
                     secret: false,
+                    options: None,
                 },
             ],
             index: 0,
@@ -153,14 +164,116 @@ impl App {
             return;
         }
         self.dialog = Dialog::Form(FormDialog {
-            title: "设置远程仓库",
+            title: "设置 Git 远程仓库",
             submit_label: "Enter 保存",
             kind: FormKind::SetRemote(team.team_name.clone()),
             fields: vec![InputField {
                 label: "Remote URL",
                 value: team.git_remote.clone().unwrap_or_default(),
                 secret: false,
+                options: None,
             }],
+            index: 0,
+            error: None,
+        });
+    }
+
+    pub(crate) fn open_choose_sync_backend(&mut self) {
+        let Some(team) = self.selected_team() else {
+            self.status = "没有可配置同步方式的团队".to_string();
+            return;
+        };
+        let Some(access) = self.selected_access() else {
+            self.status = format!("请先解锁团队: {}", team.team_name);
+            return;
+        };
+        let mode = match access.config.effective_sync_backend() {
+            Some(SyncBackend::Git) => "git",
+            Some(SyncBackend::S3) => "s3",
+            None => {
+                if access.config.git_remote.is_some() {
+                    "git"
+                } else {
+                    "s3"
+                }
+            }
+        };
+        self.dialog = Dialog::Form(FormDialog {
+            title: "选择同步方式",
+            submit_label: "Enter 下一步",
+            kind: FormKind::ChooseSyncBackend(team.team_name.clone()),
+            fields: vec![InputField {
+                label: "同步方式",
+                value: mode.to_string(),
+                secret: false,
+                options: Some(vec!["git", "s3"]),
+            }],
+            index: 0,
+            error: None,
+        });
+    }
+
+    pub(crate) fn open_set_s3(&mut self) {
+        let Some(team) = self.selected_team() else {
+            self.status = "没有可设置 S3 的团队".to_string();
+            return;
+        };
+        let Some(access) = self.selected_access() else {
+            self.status = format!("请先解锁团队: {}", team.team_name);
+            return;
+        };
+        let s3 = access.config.s3.clone();
+        self.dialog = Dialog::Form(FormDialog {
+            title: "设置 S3 远程",
+            submit_label: "Enter 保存",
+            kind: FormKind::SetS3(team.team_name.clone()),
+            fields: vec![
+                InputField {
+                    label: "Endpoint",
+                    value: s3.as_ref().map(|it| it.endpoint.clone()).unwrap_or_default(),
+                    secret: false,
+                    options: None,
+                },
+                InputField {
+                    label: "Region",
+                    value: s3.as_ref().map(|it| it.region.clone()).unwrap_or_else(|| "us-east-1".to_string()),
+                    secret: false,
+                    options: None,
+                },
+                InputField {
+                    label: "Bucket",
+                    value: s3.as_ref().map(|it| it.bucket.clone()).unwrap_or_default(),
+                    secret: false,
+                    options: None,
+                },
+                InputField {
+                    label: "Access Key ID",
+                    value: s3.as_ref().map(|it| it.access_key_id.clone()).unwrap_or_default(),
+                    secret: false,
+                    options: None,
+                },
+                InputField {
+                    label: "Secret Access Key",
+                    value: s3.as_ref().map(|it| it.secret_access_key.clone()).unwrap_or_default(),
+                    secret: true,
+                    options: None,
+                },
+                InputField {
+                    label: "Root",
+                    value: s3.as_ref().map(|it| it.root.clone()).unwrap_or_default(),
+                    secret: false,
+                    options: None,
+                },
+                InputField {
+                    label: "Force Path Style",
+                    value: s3
+                        .as_ref()
+                        .map(|it| it.force_path_style.to_string())
+                        .unwrap_or_else(|| "true".to_string()),
+                    secret: false,
+                    options: None,
+                },
+            ],
             index: 0,
             error: None,
         });
@@ -179,6 +292,7 @@ impl App {
                 label: "团队密码",
                 value: String::new(),
                 secret: true,
+                options: None,
             }],
             index: 0,
             error: None,
@@ -218,8 +332,8 @@ impl App {
             self.status = "请先解锁团队，再执行同步".to_string();
             return Ok(());
         };
-        if access.config.git_remote.is_none() {
-            self.status = format!("错误: 团队未配置远程仓库: {}", access.config.team_name);
+        if !access.config.has_remote() {
+            self.status = format!("错误: 团队未配置远程: {}", access.config.team_name);
             return Ok(());
         }
         tui_ops::sync_team(&self.paths, &access)?;
@@ -248,7 +362,7 @@ impl App {
         let mut synced = 0_usize;
         let mut skipped = Vec::new();
         for team in &self.teams {
-            if team.git_remote.is_none() {
+            if team.sync_backend.is_none() {
                 skipped.push(team.team_name.clone());
                 continue;
             }
@@ -258,7 +372,7 @@ impl App {
             }
         }
         if synced == 0 {
-            self.status = format!("错误: 没有已配置远程仓库的团队: {}", skipped.join(", "));
+            self.status = format!("错误: 没有已配置远程的团队: {}", skipped.join(", "));
             return Ok(());
         }
         self.reload_teams()?;
@@ -266,7 +380,7 @@ impl App {
             format!("已同步全部团队: {synced}")
         } else {
             format!(
-                "已同步 {synced} 个团队，未配置远程仓库: {}",
+                "已同步 {synced} 个团队，未配置远程: {}",
                 skipped.join(", ")
             )
         };
@@ -334,12 +448,92 @@ impl App {
                 self.queue_edit_secret(team, original_key, key, value)?;
                 Ok(())
             }
+            FormKind::ChooseSyncBackend(team) => {
+                if !self.unlocked.contains_key(team) {
+                    self.status = format!("请先解锁团队: {team}");
+                    return Ok(());
+                }
+                let mode = dialog.fields[0].value.trim().to_ascii_lowercase();
+                let access = self.unlocked.get(team).cloned().expect("checked unlocked");
+                match mode.as_str() {
+                    "git" => {
+                        if access.config.git_remote.is_some() {
+                            self.queue_set_sync_backend(team, SyncBackend::Git)?;
+                        } else {
+                            self.dialog = Dialog::None;
+                            self.open_set_remote();
+                        }
+                        Ok(())
+                    }
+                    "s3" => {
+                        if access.config.s3.is_some() {
+                            self.queue_set_sync_backend(team, SyncBackend::S3)?;
+                        } else {
+                            self.dialog = Dialog::None;
+                            self.open_set_s3();
+                        }
+                        Ok(())
+                    }
+                    _ => anyhow::bail!("同步方式必须是 git 或 s3"),
+                }
+            }
             FormKind::SetRemote(team) => {
                 if !self.unlocked.contains_key(team) {
                     self.status = format!("请先解锁团队: {team}");
                     return Ok(());
                 }
                 self.queue_set_remote(team, &dialog.fields[0].value)?;
+                Ok(())
+            }
+            FormKind::SetS3(team) => {
+                if !self.unlocked.contains_key(team) {
+                    self.status = format!("请先解锁团队: {team}");
+                    return Ok(());
+                }
+                let endpoint = dialog.fields[0].value.trim();
+                let region = dialog.fields[1].value.trim();
+                let bucket = dialog.fields[2].value.trim();
+                let access_key_id = dialog.fields[3].value.trim();
+                let secret_access_key = dialog.fields[4].value.trim();
+                let root = dialog.fields[5].value.trim().trim_matches('/').to_string();
+                let force_path_style = dialog.fields[6]
+                    .value
+                    .trim()
+                    .parse::<bool>()
+                    .map_err(|_| anyhow::anyhow!("Force Path Style 必须是 true 或 false"))?;
+
+                if endpoint.is_empty()
+                    && region.is_empty()
+                    && bucket.is_empty()
+                    && access_key_id.is_empty()
+                    && secret_access_key.is_empty()
+                    && root.is_empty()
+                {
+                    self.queue_set_s3(team, None)?;
+                    return Ok(());
+                }
+
+                if endpoint.is_empty()
+                    || region.is_empty()
+                    || bucket.is_empty()
+                    || access_key_id.is_empty()
+                    || secret_access_key.is_empty()
+                {
+                    anyhow::bail!("S3 配置不完整");
+                }
+
+                self.queue_set_s3(
+                    team,
+                    Some(TeamS3Config {
+                        endpoint: endpoint.to_string(),
+                        region: region.to_string(),
+                        bucket: bucket.to_string(),
+                        access_key_id: access_key_id.to_string(),
+                        secret_access_key: secret_access_key.to_string(),
+                        root,
+                        force_path_style,
+                    }),
+                )?;
                 Ok(())
             }
             FormKind::DeleteTeam(team) => {
@@ -438,10 +632,42 @@ impl App {
     fn queue_set_remote(&mut self, team: &str, url: &str) -> Result<()> {
         self.queue_progress_action(
             "更新中",
-            format!("正在更新团队 {team} 的远程仓库并执行同步，完成后会自动关闭。"),
+            format!("正在更新团队 {team} 的 Git 远程配置，完成后会自动关闭。"),
             crate::tui_app::PendingAction::SetRemote {
                 team: team.to_string(),
                 url: url.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_set_s3(&mut self, team: &str, config: Option<TeamS3Config>) -> Result<()> {
+        self.queue_progress_action(
+            "更新中",
+            if config.is_some() {
+                format!("正在更新团队 {team} 的 S3 远程配置，完成后会自动关闭。")
+            } else {
+                format!("正在清空团队 {team} 的 S3 远程配置，完成后会自动关闭。")
+            },
+            crate::tui_app::PendingAction::SetS3 {
+                team: team.to_string(),
+                config,
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_set_sync_backend(&mut self, team: &str, backend: SyncBackend) -> Result<()> {
+        let target = match backend {
+            SyncBackend::Git => "Git",
+            SyncBackend::S3 => "S3",
+        };
+        self.queue_progress_action(
+            "更新中",
+            format!("正在切换团队 {team} 的同步方式为 {target}，完成后会自动关闭。"),
+            crate::tui_app::PendingAction::SetSyncBackend {
+                team: team.to_string(),
+                backend,
             },
         );
         Ok(())
@@ -524,7 +750,55 @@ impl App {
         let updated = tui_ops::set_remote(&self.paths, &access, url)?;
         self.unlocked.insert(team.to_string(), updated);
         self.reload_teams()?;
-        self.status = format!("已更新远程: {team}");
+        self.status = format!("已更新 Git 远程: {team}");
+        Ok(())
+    }
+
+    pub(crate) fn set_s3_with_progress(
+        &mut self,
+        team: &str,
+        config: Option<TeamS3Config>,
+    ) -> Result<()> {
+        let Some(access) = self.unlocked.get(team).cloned() else {
+            self.status = format!("请先解锁团队: {team}");
+            return Ok(());
+        };
+        let updated = tui_ops::set_s3(&self.paths, &access, config)?;
+        self.unlocked.insert(team.to_string(), updated);
+        self.reload_teams()?;
+        self.status = if self
+            .unlocked
+            .get(team)
+            .and_then(|access| access.config.s3.as_ref())
+            .is_some()
+        {
+            format!("已更新 S3 远程: {team}")
+        } else {
+            format!("已清空 S3 远程: {team}")
+        };
+        Ok(())
+    }
+
+    pub(crate) fn set_sync_backend_with_progress(
+        &mut self,
+        team: &str,
+        backend: SyncBackend,
+    ) -> Result<()> {
+        let Some(access) = self.unlocked.get(team).cloned() else {
+            self.status = format!("请先解锁团队: {team}");
+            return Ok(());
+        };
+        let updated = tui_ops::set_sync_backend(&self.paths, &access, backend)?;
+        self.unlocked.insert(team.to_string(), updated);
+        self.reload_teams()?;
+        self.status = format!(
+            "已切换同步方式: {} -> {}",
+            team,
+            match backend {
+                SyncBackend::Git => "Git",
+                SyncBackend::S3 => "S3",
+            }
+        );
         Ok(())
     }
 
@@ -596,7 +870,7 @@ mod tests {
             "password_verifier": STANDARD.encode(password_verifier(&key)),
         });
         fs::write(
-            repo_dir.join(".rupass-team.json"),
+            repo_dir.join("rupass-team.json"),
             serde_json::to_vec_pretty(&metadata).unwrap(),
         )
         .unwrap();
@@ -623,7 +897,10 @@ mod tests {
         app.submit_form().unwrap();
         assert!(matches!(
             app.dialog,
-            Dialog::Progress { title: "导入中", .. }
+            Dialog::Progress {
+                title: "导入中",
+                ..
+            }
         ));
         assert!(matches!(
             app.pending_action,
@@ -662,7 +939,10 @@ mod tests {
         app.submit_form().unwrap();
         assert!(matches!(
             app.dialog,
-            Dialog::Progress { title: "保存中", .. }
+            Dialog::Progress {
+                title: "保存中",
+                ..
+            }
         ));
         assert!(matches!(
             app.pending_action,
@@ -671,7 +951,10 @@ mod tests {
 
         app.run_pending_action().unwrap();
 
-        assert_eq!(tui_ops::get_secret(&app.paths, "dev_team", "db_password").unwrap(), "hello123");
+        assert_eq!(
+            tui_ops::get_secret(&app.paths, "dev_team", "db_password").unwrap(),
+            "hello123"
+        );
         assert_eq!(app.status, "已新增 key: db_password");
     }
 
@@ -697,7 +980,10 @@ mod tests {
         app.confirm_delete_key().unwrap();
         assert!(matches!(
             app.dialog,
-            Dialog::Progress { title: "删除中", .. }
+            Dialog::Progress {
+                title: "删除中",
+                ..
+            }
         ));
         assert!(matches!(
             app.pending_action,

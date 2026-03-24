@@ -6,14 +6,16 @@ use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::cli::{
-    Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamImportArgs, TeamScopedCommands,
+    Commands, ParsedCli, TeamClearS3Args, TeamCommands, TeamCreateArgs, TeamImportArgs,
+    TeamScopedCommands, TeamSetRemoteArgs, TeamSetS3Args,
 };
 use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
-use crate::git_sync::{TeamMetadata, bootstrap_team_repo, load_team_metadata, sync_team_repo};
 use crate::storage::{
-    AppPaths, SecretRecord, TeamConfig, list_team_configs, load_secret_record, load_team_config,
-    save_team_config, validate_team_name,
+    AppPaths, SecretRecord, SyncBackend, TeamConfig, TeamMetadata, TeamS3Config, list_team_configs,
+    load_secret_record, load_team_config, save_team_config, validate_team_name,
 };
+use crate::git_sync::{bootstrap_team_repo, load_team_metadata};
+use crate::team_sync::{has_remote, sync_team_backends};
 use crate::tui_ops;
 
 static IMPORT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -73,12 +75,12 @@ fn dispatch_team_command(paths: &AppPaths, command: TeamCommands) -> Result<()> 
             Ok(())
         }
         TeamCommands::Del(args) => delete_team(paths, &args.team, args.password.as_deref()),
-        TeamCommands::SetRemote(args) => {
-            set_team_remote(paths, &args.team, &args.url, args.password.as_deref())
-        }
+        TeamCommands::SetRemote(args) => set_team_remote(paths, args),
         TeamCommands::ClearRemote(args) => {
             clear_team_remote(paths, &args.team, args.password.as_deref())
         }
+        TeamCommands::SetS3(args) => set_team_s3(paths, args),
+        TeamCommands::ClearS3(args) => clear_team_s3(paths, args),
         TeamCommands::Sync(args) => sync_team(paths, &args.team, args.password.as_deref()),
     }
 }
@@ -129,13 +131,13 @@ fn sync_all_teams(paths: &AppPaths) -> Result<()> {
     let mut synced = 0_usize;
     let mut skipped = Vec::new();
     for team in teams {
-        if team.git_remote.is_none() {
+        if !has_remote(&team) {
             eprintln!("skipped team without remote: {}", team.team_name);
             skipped.push(team.team_name);
             continue;
         }
         let access = authenticate_team(paths, &team.team_name)?;
-        sync_team_repo(&paths.team_store_dir(&team.team_name), &access.config)?;
+        sync_team_backends(&paths.team_store_dir(&team.team_name), &access.config)?;
         println!("synced team: {}", team.team_name);
         synced += 1;
     }
@@ -155,9 +157,11 @@ fn list_teams(paths: &AppPaths) -> Result<()> {
 
     for team in teams {
         println!(
-            "{}\t{}",
+            "{}\tsync={}\tgit={}\ts3={}",
             team.team_name,
-            team.git_remote.as_deref().unwrap_or("-")
+            team.sync_backend_label(),
+            team.git_remote.as_deref().unwrap_or("-"),
+            team.s3.as_ref().map(|s3| s3.bucket.as_str()).unwrap_or("-")
         );
     }
     Ok(())
@@ -203,23 +207,47 @@ fn delete_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<(
     Ok(())
 }
 
-fn set_team_remote(paths: &AppPaths, team: &str, url: &str, password: Option<&str>) -> Result<()> {
-    let access = tui_ops::open_team(paths, team, password)?;
-    tui_ops::set_remote(paths, &access, url)?;
-    println!("updated remote: {team}\t{url}");
+fn set_team_remote(paths: &AppPaths, args: TeamSetRemoteArgs) -> Result<()> {
+    let access = tui_ops::open_team(paths, &args.team, args.password.as_deref())?;
+    tui_ops::set_remote(paths, &access, &args.url)?;
+    println!("updated git remote: {}\t{}", args.team, args.url);
     Ok(())
 }
 
 fn clear_team_remote(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
     let access = tui_ops::open_team(paths, team, password)?;
     tui_ops::set_remote(paths, &access, "")?;
-    println!("cleared remote: {team}");
+    println!("cleared git remote: {team}");
+    Ok(())
+}
+
+fn set_team_s3(paths: &AppPaths, args: TeamSetS3Args) -> Result<()> {
+    let access = tui_ops::open_team(paths, &args.team, args.password.as_deref())?;
+    let root = args.root.unwrap_or_default().trim_matches('/').to_string();
+    let s3 = TeamS3Config {
+        endpoint: args.endpoint,
+        region: args.region,
+        bucket: args.bucket,
+        access_key_id: args.access_key_id,
+        secret_access_key: args.secret_access_key,
+        root,
+        force_path_style: args.force_path_style,
+    };
+    tui_ops::set_s3(paths, &access, Some(s3))?;
+    println!("updated S3 remote: {}", args.team);
+    Ok(())
+}
+
+fn clear_team_s3(paths: &AppPaths, args: TeamClearS3Args) -> Result<()> {
+    let access = tui_ops::open_team(paths, &args.team, args.password.as_deref())?;
+    tui_ops::set_s3(paths, &access, None)?;
+    println!("cleared S3 remote: {}", args.team);
     Ok(())
 }
 
 fn sync_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<()> {
     let access = tui_ops::open_team(paths, team, password)?;
-    if access.config.git_remote.is_none() {
+    if !has_remote(&access.config) {
         bail!("team has no remote configured: {team}");
     }
     tui_ops::sync_team(paths, &access)?;
@@ -386,6 +414,8 @@ fn build_imported_team_config(
         password_verifier: metadata.password_verifier.clone(),
         cipher_key: Some(STANDARD.encode(derived_key)),
         git_remote: Some(remote.to_string()),
+        s3: None,
+        sync_backend: Some(SyncBackend::Git),
     })
 }
 

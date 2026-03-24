@@ -132,8 +132,20 @@ fn team_detail_panel(app: &App) -> Paragraph<'_> {
             ),
         ]));
         lines.push(Line::from(format!(
-            "Remote: {}",
+            "Sync: {}",
+            match team.sync_backend {
+                Some(crate::storage::SyncBackend::Git) => "Git",
+                Some(crate::storage::SyncBackend::S3) => "S3",
+                None => "未选择",
+            }
+        )));
+        lines.push(Line::from(format!(
+            "Git Remote: {}",
             team.git_remote.as_deref().unwrap_or("未设置")
+        )));
+        lines.push(Line::from(format!(
+            "S3 Bucket: {}",
+            team.s3_bucket.as_deref().unwrap_or("未设置")
         )));
     }
     Paragraph::new(Text::from(lines))
@@ -258,6 +270,11 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
         } else {
             field.value.clone()
         };
+        let value = if field.options.is_some() {
+            format!("< {} >", value)
+        } else {
+            value
+        };
         lines.push(Line::from(vec![
             Span::styled(marker, marker_style),
             Span::raw(" "),
@@ -281,6 +298,15 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
             primary_style().add_modifier(Modifier::BOLD),
         ),
     ]));
+    if dialog.fields.iter().any(|field| field.options.is_some()) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("切换: ", muted()),
+            Span::styled("↑/↓", primary_style().add_modifier(Modifier::BOLD)),
+            Span::raw(" 或 "),
+            Span::styled("←/→", primary_style().add_modifier(Modifier::BOLD)),
+        ]));
+    }
     if let Some(error) = &dialog.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -465,7 +491,8 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("i", "从远程导入团队", primary_style()),
             action_line("c", "创建团队", primary_style()),
             action_line("u", "解锁团队", accent_style()),
-            action_line("r", "设置/清空 remote", accent_style()),
+            action_line("r", "选择 Git/S3 同步", accent_style()),
+            action_line("3", "设置 S3 远程", accent_style()),
             action_line("s", "同步全部团队", success_style()),
             action_line("x", "删除当前团队", danger_style()),
             action_line("h", "帮助", muted()),
@@ -475,7 +502,9 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("a", "新增 key", primary_style()),
             action_line("e", "更新 key", accent_style()),
             action_line("d", "删除当前 key", danger_style()),
+            action_line("r", "选择 Git/S3 同步", accent_style()),
             action_line("s", "同步当前团队", success_style()),
+            action_line("3", "设置 S3 远程", accent_style()),
             action_line("u", "解锁当前团队", accent_style()),
             action_line("h", "帮助", muted()),
             action_line("q", "退出", muted()),

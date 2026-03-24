@@ -6,24 +6,17 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
-use crate::storage::TeamConfig;
+use crate::storage::{TeamConfig, TeamMetadata};
 
-const TEAM_METADATA_FILE: &str = ".rupass-team.json";
+const TEAM_METADATA_FILE: &str = "rupass-team.json";
+const LEGACY_TEAM_METADATA_FILE: &str = ".rupass-team.json";
 const CHINA_OFFSET_HOURS: i8 = 8;
 const CHINA_DATETIME_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct TeamMetadata {
-    pub(crate) team_name: String,
-    pub(crate) salt: String,
-    pub(crate) password_verifier: String,
-}
 
 pub(crate) fn ensure_git_repo(repo_dir: &Path) -> Result<()> {
     if repo_dir.join(".git").exists() {
@@ -44,11 +37,11 @@ pub(crate) fn bootstrap_team_repo(repo_dir: &Path, remote: &str) -> Result<()> {
 }
 
 pub(crate) fn load_team_metadata(repo_dir: &Path) -> Result<TeamMetadata> {
-    let path = team_metadata_path(repo_dir);
+    let path = migrate_legacy_team_metadata(repo_dir)?;
     if !path.exists() {
         bail!(
             "missing remote team metadata: {}\n请在旧机器上升级到最新 rupass 后执行一次同步，再重试导入",
-            path.display()
+            team_metadata_path(repo_dir).display()
         );
     }
 
@@ -99,6 +92,7 @@ pub(crate) fn sync_team_repo(repo_dir: &Path, config: &TeamConfig) -> Result<()>
 fn sync_team_metadata(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
     let path = team_metadata_path(repo_dir);
     let expected = TeamMetadata::from(config);
+    let legacy_path = legacy_team_metadata_path(repo_dir);
 
     if path.exists() {
         let actual: TeamMetadata = read_json(&path)?;
@@ -109,6 +103,25 @@ fn sync_team_metadata(repo_dir: &Path, config: &TeamConfig) -> Result<()> {
                 path.display()
             );
         }
+        return Ok(());
+    }
+
+    if legacy_path.exists() {
+        let actual: TeamMetadata = read_json(&legacy_path)?;
+        if actual != expected {
+            bail!(
+                "remote team metadata does not match local config\nrepo: {}\nmetadata: {}",
+                repo_dir.display(),
+                legacy_path.display()
+            );
+        }
+        fs::rename(&legacy_path, &path).with_context(|| {
+            format!(
+                "failed to migrate team metadata from {} to {}",
+                legacy_path.display(),
+                path.display()
+            )
+        })?;
         return Ok(());
     }
 
@@ -162,6 +175,29 @@ fn has_local_commits(repo_dir: &Path) -> Result<bool> {
 
 fn team_metadata_path(repo_dir: &Path) -> PathBuf {
     repo_dir.join(TEAM_METADATA_FILE)
+}
+
+fn legacy_team_metadata_path(repo_dir: &Path) -> PathBuf {
+    repo_dir.join(LEGACY_TEAM_METADATA_FILE)
+}
+
+fn migrate_legacy_team_metadata(repo_dir: &Path) -> Result<PathBuf> {
+    let path = team_metadata_path(repo_dir);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let legacy_path = legacy_team_metadata_path(repo_dir);
+    if legacy_path.exists() {
+        fs::rename(&legacy_path, &path).with_context(|| {
+            format!(
+                "failed to migrate team metadata from {} to {}",
+                legacy_path.display(),
+                path.display()
+            )
+        })?;
+    }
+    Ok(path)
 }
 
 fn remote_has_main_branch(repo_dir: &Path) -> Result<bool> {
@@ -241,7 +277,7 @@ fn sync_lock_path(repo_dir: &Path) -> Result<std::path::PathBuf> {
     let Some(base_dir) = store_dir.parent() else {
         bail!("invalid repo dir: {}", repo_dir.display());
     };
-    Ok(base_dir.join(".sync.lock"))
+    Ok(base_dir.join("sync.lock"))
 }
 
 fn format_sync_error(repo_dir: &Path, message: &str) -> String {
@@ -299,25 +335,15 @@ fn parse_conflict_paths(status: &str) -> Vec<String> {
         .collect()
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let content = serde_json::to_vec_pretty(value).context("failed to serialize json")?;
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> {
     let content = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_slice(&content).with_context(|| format!("failed to parse {}", path.display()))
-}
-
-impl From<&TeamConfig> for TeamMetadata {
-    fn from(config: &TeamConfig) -> Self {
-        Self {
-            team_name: config.team_name.clone(),
-            salt: config.salt.clone(),
-            password_verifier: config.password_verifier.clone(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -384,6 +410,8 @@ AA store/c.json\n";
             password_verifier: "verifier".to_string(),
             cipher_key: None,
             git_remote: Some("git@example.com:org/dev_team.git".to_string()),
+            s3: None,
+            sync_backend: None,
         };
 
         sync_team_metadata(&repo_dir, &config).unwrap();
@@ -415,6 +443,8 @@ AA store/c.json\n";
             password_verifier: "verifier".to_string(),
             cipher_key: None,
             git_remote: Some("git@example.com:org/dev_team.git".to_string()),
+            s3: None,
+            sync_backend: None,
         };
 
         let err = sync_team_metadata(&repo_dir, &config).unwrap_err();
