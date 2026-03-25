@@ -10,11 +10,11 @@ use crate::cli::{
     TeamScopedCommands, TeamSetRemoteArgs, TeamSetS3Args,
 };
 use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
+use crate::git_sync::{bootstrap_team_repo, load_team_metadata};
 use crate::storage::{
     AppPaths, SecretRecord, SyncBackend, TeamConfig, TeamMetadata, TeamS3Config, list_team_configs,
     load_secret_record, load_team_config, save_team_config, validate_team_name,
 };
-use crate::git_sync::{bootstrap_team_repo, load_team_metadata};
 use crate::team_sync::{has_remote, sync_team_backends};
 use crate::tui_ops;
 

@@ -282,15 +282,9 @@ mod tests {
             br#"{"team_name":"dev_team"}"#,
         )
         .unwrap();
+        fs::write(team_dir.join("config.json"), br#"{"theme":"dark"}"#).unwrap();
         fs::write(
-            team_dir.join("config.json"),
-            br#"{"theme":"dark"}"#,
-        )
-        .unwrap();
-        fs::write(
-            team_dir.join(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
-            ),
+            team_dir.join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"),
             br#"{
   "encrypted_key":"k",
   "encrypted_value":"v",

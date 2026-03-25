@@ -32,7 +32,6 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
         Dialog::None => {}
         Dialog::Form(dialog) => render_form_dialog(frame, dialog),
         Dialog::ConfirmDeleteKey { team, key } => render_confirm_dialog(frame, team, key),
-        Dialog::SecretView { key, value } => render_secret_dialog(frame, key, value),
         Dialog::Progress { title, message } => render_progress_dialog(frame, title, message),
         Dialog::Help => render_help_dialog(frame, app),
     }
@@ -205,10 +204,18 @@ fn secret_detail_panel(app: &App) -> Paragraph<'_> {
                 Span::styled("当前 Key: ", muted()),
                 Span::styled(key, primary_style().add_modifier(Modifier::BOLD)),
             ]));
-            lines.push(Line::from(Span::styled(
-                "当前 key 已选中，可直接查看 value。",
-                accent_style(),
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("当前 Value: ", muted()),
+                match app.selected_secret_value() {
+                    Some(value) if value.is_empty() => Span::styled("(空)", accent_style()),
+                    Some(value) => Span::styled(
+                        value.to_string(),
+                        Style::default().fg(Color::Rgb(242, 208, 129)),
+                    ),
+                    None if unlocked => Span::styled("读取失败", danger_style()),
+                    None => Span::styled("请先解锁后查看", accent_style()),
+                },
+            ]));
         } else {
             lines.push(Line::from(Span::styled(
                 "还没有可用的 key。",
@@ -288,7 +295,10 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
     lines.push(Line::from(vec![
         Span::styled("操作: ", muted()),
         Span::styled("Enter", primary_style().add_modifier(Modifier::BOLD)),
-        Span::raw(format!(" {}", dialog.submit_label.trim_start_matches("Enter "))),
+        Span::raw(format!(
+            " {}",
+            dialog.submit_label.trim_start_matches("Enter ")
+        )),
         Span::raw("  ·  "),
         Span::styled("Esc", primary_style().add_modifier(Modifier::BOLD)),
         Span::raw(" 取消"),
@@ -362,34 +372,6 @@ fn render_confirm_dialog(frame: &mut Frame, team: &str, key: &str) {
             ]),
         ]))
         .block(block("删除确认", true)),
-        area,
-    );
-}
-
-fn render_secret_dialog(frame: &mut Frame, key: &str, value: &str) {
-    let area = popup_area(frame.area(), 68, 12);
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::from(vec![
-                Span::styled("Key: ", muted()),
-                Span::styled(
-                    key.to_string(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("Value:", muted())),
-            Line::from(""),
-            Line::from(Span::styled(
-                value.to_string(),
-                Style::default().fg(Color::Rgb(242, 208, 129)),
-            )),
-            Line::from(""),
-            Line::from("Esc 关闭"),
-        ]))
-        .block(block("密钥值", true))
-        .wrap(Wrap { trim: false }),
         area,
     );
 }

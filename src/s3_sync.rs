@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env,
-    fs,
+    env, fs,
     net::IpAddr,
     path::Path,
     time::UNIX_EPOCH,
@@ -178,7 +177,11 @@ fn diff_paths(current: &Manifest, base: &Manifest) -> BTreeSet<String> {
     paths
 }
 
-fn detect_conflicts(current_local: &Manifest, current_remote: &Manifest, base: &Manifest) -> Vec<String> {
+fn detect_conflicts(
+    current_local: &Manifest,
+    current_remote: &Manifest,
+    base: &Manifest,
+) -> Vec<String> {
     let changed_local = diff_paths(current_local, base);
     let changed_remote = diff_paths(current_remote, base);
     changed_local
@@ -298,7 +301,8 @@ fn should_sync_local_file(name: &str) -> bool {
 
 fn manifest_entry_for_path(path: &Path) -> Result<ManifestEntry> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let metadata = fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
+    let metadata =
+        fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
     let modified = metadata
         .modified()
         .with_context(|| format!("failed to read modified time {}", path.display()))?
@@ -358,8 +362,9 @@ fn cleanup_local_internal_files(repo_dir: &Path) -> Result<()> {
     ] {
         let path = repo_dir.join(file_name);
         if path.exists() {
-            fs::remove_file(&path)
-                .with_context(|| format!("failed to remove stale internal file {}", path.display()))?;
+            fs::remove_file(&path).with_context(|| {
+                format!("failed to remove stale internal file {}", path.display())
+            })?;
         }
     }
     Ok(())
@@ -519,7 +524,8 @@ impl S3Client {
     }
 
     fn put_manifest(&self, manifest: &Manifest) -> Result<()> {
-        let bytes = serde_json::to_vec_pretty(manifest).context("failed to serialize remote S3 manifest")?;
+        let bytes = serde_json::to_vec_pretty(manifest)
+            .context("failed to serialize remote S3 manifest")?;
         self.put_object(&self.manifest_key(), bytes, "application/json")?;
         let _ = self.delete_object(&self.legacy_manifest_key());
         Ok(())
@@ -527,7 +533,8 @@ impl S3Client {
 
     fn upload_file(&self, repo_dir: &Path, relative_path: &str) -> Result<()> {
         let path = repo_dir.join(relative_path);
-        let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         let content_type = if relative_path.ends_with(".json") {
             "application/json"
         } else {
@@ -538,7 +545,10 @@ impl S3Client {
 
     fn download_file(&self, repo_dir: &Path, relative_path: &str) -> Result<()> {
         let Some(bytes) = self.get_object(&self.team_object_key(relative_path))? else {
-            bail!("remote S3 object missing during sync: {}", self.team_object_key(relative_path));
+            bail!(
+                "remote S3 object missing during sync: {}",
+                self.team_object_key(relative_path)
+            );
         };
         let path = repo_dir.join(relative_path);
         if let Some(parent) = path.parent() {
@@ -560,20 +570,22 @@ impl S3Client {
         } else {
             format!("{prefix}/")
         };
-        let response = self.send_signed_request(
-            Method::GET,
-            None,
-            &[
-                ("list-type".to_string(), "2".to_string()),
-                ("prefix".to_string(), prefix),
-            ],
-            Vec::new(),
-            None,
-        )
-        .context("ListObjectsV2 transport failed")?;
+        let response = self
+            .send_signed_request(
+                Method::GET,
+                None,
+                &[
+                    ("list-type".to_string(), "2".to_string()),
+                    ("prefix".to_string(), prefix),
+                ],
+                Vec::new(),
+                None,
+            )
+            .context("ListObjectsV2 transport failed")?;
         match response.status {
             StatusCode::OK => Ok(parse_list_object_keys(
-                &String::from_utf8(response.body).context("list objects response is not valid UTF-8")?,
+                &String::from_utf8(response.body)
+                    .context("list objects response is not valid UTF-8")?,
             )),
             _ => bail!(format_raw_http_error("ListObjectsV2", &response)),
         }
@@ -643,7 +655,12 @@ impl S3Client {
         let request_url = if query_string.is_empty() {
             format!("{}{}", endpoint.origin().ascii_serialization(), path)
         } else {
-            format!("{}{}?{}", endpoint.origin().ascii_serialization(), path, query_string)
+            format!(
+                "{}{}?{}",
+                endpoint.origin().ascii_serialization(),
+                path,
+                query_string
+            )
         };
 
         let now = OffsetDateTime::now_utc();
@@ -654,7 +671,10 @@ impl S3Client {
 
         let mut signed_headers = BTreeMap::new();
         signed_headers.insert("amz-sdk-invocation-id".to_string(), invocation_id.clone());
-        signed_headers.insert("amz-sdk-request".to_string(), "attempt=1; max=3".to_string());
+        signed_headers.insert(
+            "amz-sdk-request".to_string(),
+            "attempt=1; max=3".to_string(),
+        );
         signed_headers.insert("host".to_string(), host_header.clone());
         signed_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
         signed_headers.insert("x-amz-date".to_string(), amz_date.clone());
@@ -754,8 +774,8 @@ fn canonical_target(
         .ok_or_else(|| anyhow!("endpoint URL is missing host"))?;
     let mut host_header = host.to_string();
     if let Some(port) = endpoint.port() {
-        let default_port =
-            (endpoint.scheme() == "https" && port == 443) || (endpoint.scheme() == "http" && port == 80);
+        let default_port = (endpoint.scheme() == "https" && port == 443)
+            || (endpoint.scheme() == "http" && port == 80);
         if !default_port {
             host_header = format!("{host}:{port}");
         }
@@ -805,13 +825,9 @@ fn uri_encode(value: &str, encode_slash: bool) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.as_bytes() {
         match *byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'_'
-            | b'.'
-            | b'~' => encoded.push(char::from(*byte)),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(*byte))
+            }
             b'/' if !encode_slash => encoded.push('/'),
             _ => encoded.push_str(&format!("%{:02X}", byte)),
         }
@@ -827,7 +843,13 @@ fn sha256_hex(data: impl AsRef<[u8]>) -> String {
     hex::encode(Sha256::digest(data.as_ref()))
 }
 
-fn sign_v4(secret: &str, short_date: &str, region: &str, service: &str, message: &[u8]) -> [u8; 32] {
+fn sign_v4(
+    secret: &str,
+    short_date: &str,
+    region: &str,
+    service: &str,
+    message: &[u8],
+) -> [u8; 32] {
     let k_date = hmac_sha256(format!("AWS4{secret}").as_bytes(), short_date.as_bytes());
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());
@@ -879,7 +901,12 @@ fn format_amz_date(time: OffsetDateTime) -> String {
 }
 
 fn format_short_date(time: OffsetDateTime) -> String {
-    format!("{:04}{:02}{:02}", time.year(), u8::from(time.month()), time.day())
+    format!(
+        "{:04}{:02}{:02}",
+        time.year(),
+        u8::from(time.month()),
+        time.day()
+    )
 }
 
 fn random_invocation_id() -> String {

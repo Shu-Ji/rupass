@@ -10,6 +10,7 @@ pub(crate) struct App {
     pub(crate) paths: AppPaths,
     pub(crate) teams: Vec<TeamSummary>,
     pub(crate) keys: Vec<String>,
+    pub(crate) current_secret_value: Option<String>,
     pub(crate) unlocked: HashMap<String, TeamAccess>,
     pub(crate) team_index: usize,
     pub(crate) page: Page,
@@ -29,10 +30,6 @@ pub(crate) enum Dialog {
     ConfirmDeleteKey {
         team: String,
         key: String,
-    },
-    SecretView {
-        key: String,
-        value: String,
     },
     Progress {
         title: &'static str,
@@ -111,6 +108,7 @@ impl App {
             paths,
             teams: Vec::new(),
             keys: Vec::new(),
+            current_secret_value: None,
             unlocked: HashMap::new(),
             team_index: 0,
             page: Page::TeamList,
@@ -127,7 +125,7 @@ impl App {
             Dialog::None => self.handle_page_key(key),
             Dialog::Form(_) => self.handle_form_key(key),
             Dialog::ConfirmDeleteKey { .. } => self.handle_confirm_key(key),
-            Dialog::SecretView { .. } | Dialog::Help => {
+            Dialog::Help => {
                 if matches!(key.code, KeyCode::Esc) {
                     self.dialog = Dialog::None;
                 }
@@ -173,6 +171,10 @@ impl App {
         }
     }
 
+    pub(crate) fn selected_secret_value(&self) -> Option<&str> {
+        self.current_secret_value.as_deref()
+    }
+
     fn handle_page_key(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
             KeyCode::Char('q') => return Ok(true),
@@ -207,7 +209,6 @@ impl App {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_key_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_key_selection(1),
-            KeyCode::Enter => self.open_secret_view()?,
             KeyCode::Char('a') => self.open_add_secret(),
             KeyCode::Char('e') => self.open_edit_secret()?,
             KeyCode::Char('d') => self.open_delete_key(),
@@ -313,6 +314,7 @@ impl App {
         if let Page::TeamDetail { key_index, .. } = &mut self.page {
             *key_index = wrap_index(*key_index, self.keys.len(), delta);
         }
+        self.refresh_selected_secret_value();
     }
 
     fn enter_team(&mut self) {
@@ -332,6 +334,7 @@ impl App {
     fn back_to_team_list(&mut self) {
         self.page = Page::TeamList;
         self.keys.clear();
+        self.current_secret_value = None;
         self.status = "已返回团队列表。".to_string();
     }
 
@@ -351,6 +354,7 @@ impl App {
         {
             self.page = Page::TeamList;
             self.keys.clear();
+            self.current_secret_value = None;
         }
 
         self.reload_keys()
@@ -368,7 +372,7 @@ impl App {
         {
             *key_index = self.keys.len() - 1;
         }
-        Ok(())
+        self.sync_selected_secret_value()
     }
 
     pub(crate) fn has_pending_action(&self) -> bool {
@@ -480,6 +484,28 @@ impl App {
             format!("正在同步 {ready} 个团队，完成后会自动关闭。"),
             PendingAction::SyncAllTeams,
         );
+    }
+
+    fn sync_selected_secret_value(&mut self) -> Result<()> {
+        let team_name = self.selected_team().map(|team| team.team_name.clone());
+        let key = self.selected_key().map(str::to_string);
+        if team_name.is_none() || key.is_none() || self.selected_access().is_none() {
+            self.current_secret_value = None;
+            return Ok(());
+        }
+        self.current_secret_value = Some(tui_ops::get_secret(
+            &self.paths,
+            &team_name.expect("checked"),
+            &key.expect("checked"),
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn refresh_selected_secret_value(&mut self) {
+        if let Err(err) = self.sync_selected_secret_value() {
+            self.current_secret_value = None;
+            self.show_error(err.to_string());
+        }
     }
 }
 

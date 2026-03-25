@@ -287,14 +287,16 @@ fn cleanup_local_only_files(repo_dir: &Path) -> Result<()> {
             Some("rupass-manifest.json" | ".rupass-manifest.json")
         ) && path.exists()
         {
-            fs::remove_file(&path).with_context(|| {
-                format!("failed to remove local-only file {}", path.display())
-            })?;
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove local-only file {}", path.display()))?;
         }
     }
 
     for file_name in LOCAL_ONLY_FILES {
-        let _ = run_git(repo_dir, &["rm", "--cached", "--ignore-unmatch", "--", file_name]);
+        let _ = run_git(
+            repo_dir,
+            &["rm", "--cached", "--ignore-unmatch", "--", file_name],
+        );
     }
 
     Ok(())

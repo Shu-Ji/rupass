@@ -230,13 +230,19 @@ impl App {
             fields: vec![
                 InputField {
                     label: "Endpoint",
-                    value: s3.as_ref().map(|it| it.endpoint.clone()).unwrap_or_default(),
+                    value: s3
+                        .as_ref()
+                        .map(|it| it.endpoint.clone())
+                        .unwrap_or_default(),
                     secret: false,
                     options: None,
                 },
                 InputField {
                     label: "Region",
-                    value: s3.as_ref().map(|it| it.region.clone()).unwrap_or_else(|| "us-east-1".to_string()),
+                    value: s3
+                        .as_ref()
+                        .map(|it| it.region.clone())
+                        .unwrap_or_else(|| "us-east-1".to_string()),
                     secret: false,
                     options: None,
                 },
@@ -248,13 +254,19 @@ impl App {
                 },
                 InputField {
                     label: "Access Key ID",
-                    value: s3.as_ref().map(|it| it.access_key_id.clone()).unwrap_or_default(),
+                    value: s3
+                        .as_ref()
+                        .map(|it| it.access_key_id.clone())
+                        .unwrap_or_default(),
                     secret: false,
                     options: None,
                 },
                 InputField {
                     label: "Secret Access Key",
-                    value: s3.as_ref().map(|it| it.secret_access_key.clone()).unwrap_or_default(),
+                    value: s3
+                        .as_ref()
+                        .map(|it| it.secret_access_key.clone())
+                        .unwrap_or_default(),
                     secret: true,
                     options: None,
                 },
@@ -314,19 +326,6 @@ impl App {
         };
     }
 
-    pub(crate) fn open_secret_view(&mut self) -> Result<()> {
-        let (Some(team), Some(key)) = (self.selected_team(), self.selected_key()) else {
-            self.status = "没有可查看的 key".to_string();
-            return Ok(());
-        };
-        let value = tui_ops::get_secret(&self.paths, &team.team_name, key)?;
-        self.dialog = Dialog::SecretView {
-            key: key.to_string(),
-            value,
-        };
-        Ok(())
-    }
-
     pub(crate) fn sync_current_team(&mut self) -> Result<()> {
         let Some(access) = self.selected_access().cloned() else {
             self.status = "请先解锁团队，再执行同步".to_string();
@@ -379,10 +378,7 @@ impl App {
         self.status = if skipped.is_empty() {
             format!("已同步全部团队: {synced}")
         } else {
-            format!(
-                "已同步 {synced} 个团队，未配置远程: {}",
-                skipped.join(", ")
-            )
+            format!("已同步 {synced} 个团队，未配置远程: {}", skipped.join(", "))
         };
         Ok(())
     }
@@ -730,6 +726,7 @@ impl App {
                 .position(|item| item == new_key)
                 .unwrap_or(0);
         }
+        self.refresh_selected_secret_value();
         self.status = if is_edit {
             if original_key == new_key {
                 format!("已更新 key: {new_key}")
@@ -821,6 +818,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use crossterm::event::{KeyCode, KeyEvent};
 
     use super::*;
     use crate::crypto::{derive_key, password_verifier};
@@ -1032,5 +1030,30 @@ mod tests {
             "hello456"
         );
         assert_eq!(app.status, "已重命名 key: db_password -> db_password_v2");
+    }
+
+    #[test]
+    fn selected_secret_value_updates_with_selected_key() {
+        let paths = test_paths();
+        paths.ensure_base_dirs().unwrap();
+        let mut app = App::new(paths).unwrap();
+        let access = tui_ops::create_team(&app.paths, "dev_team", "secret", "secret").unwrap();
+        tui_ops::set_secret(&app.paths, &access, "alpha", "value-a").unwrap();
+        tui_ops::set_secret(&app.paths, &access, "beta", "value-b").unwrap();
+        app.unlocked.insert("dev_team".to_string(), access);
+        app.reload_teams().unwrap();
+        app.page = Page::TeamDetail {
+            team_name: "dev_team".to_string(),
+            key_index: 0,
+        };
+        app.reload_keys().unwrap();
+
+        assert_eq!(app.selected_key(), Some("alpha"));
+        assert_eq!(app.selected_secret_value(), Some("value-a"));
+
+        app.handle_key(KeyEvent::from(KeyCode::Down)).unwrap();
+
+        assert_eq!(app.selected_key(), Some("beta"));
+        assert_eq!(app.selected_secret_value(), Some("value-b"));
     }
 }
