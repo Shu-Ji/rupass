@@ -47,7 +47,7 @@ pnpm clippy
 rupass tui
 rupass team list
 rupass team create my_team --password secret
-rupass team import-file ./finn_team.json --password secret
+rupass team import-file ./my_team.json --password secret
 rupass team del my_team --password secret
 ```
 

@@ -129,17 +129,17 @@ fn imports_team_file_and_caches_cipher_key() {
     let salt = [5_u8; 16];
     let key = derive_key("secret", &salt).unwrap();
     let source = std::env::temp_dir().join(format!(
-        "rupass-import-test-{}-{}.json",
+        "finn_team-{}-{}.json",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
+    let source = source.with_file_name("finn_team.json");
     std::fs::write(
         &source,
         serde_json::to_vec_pretty(&TeamFile {
-            team_name: "finn_team".to_string(),
             salt: STANDARD.encode(salt),
             password_verifier: STANDARD.encode(password_verifier(&key)),
             encrypted_payload: "payload".to_string(),

@@ -31,7 +31,7 @@ pub(crate) struct TeamCommandInput {
         "  rupass tui\n",
         "  rupass team list\n",
         "  rupass team create my_team --password secret\n",
-        "  rupass team import-file ./finn_team.json --password secret\n",
+        "  rupass team import-file ./my_team.json --password secret\n",
         "\n",
         "默认团队示例（本地仅有一个团队时）:\n",
         "  rupass list\n",
@@ -62,7 +62,7 @@ pub(crate) enum Commands {
     #[command(
         name = "team",
         about = "团队管理命令",
-        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import-file ./finn_team.json --password secret\n  rupass team del my_team --password secret"
+        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import-file ./my_team.json --password secret\n  rupass team del my_team --password secret"
     )]
     Team {
         #[command(subcommand)]
@@ -375,7 +375,7 @@ mod tests {
             "rupass",
             "team",
             "import-file",
-            "./finn_team.json",
+            "./my_team.json",
             "--password",
             "secret",
         ])
@@ -384,7 +384,7 @@ mod tests {
             ParsedCli::Standard(cli) => match cli.command {
                 Commands::Team { command } => match command {
                     TeamCommands::ImportFile(args) => {
-                        assert_eq!(args.path, "./finn_team.json");
+                        assert_eq!(args.path, "./my_team.json");
                         assert_eq!(args.password.as_deref(), Some("secret"));
                     }
                     other => panic!("unexpected team command: {other:?}"),
