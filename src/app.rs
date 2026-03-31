@@ -1,18 +1,9 @@
 use anyhow::{Context, Result, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::cli::{Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands};
-use crate::crypto::{decrypt_text, derive_key, password_verifier, read_existing_password};
-use crate::storage::{
-    AppPaths, SecretRecord, TeamConfig, list_team_configs, load_secret_record, load_team_config,
-};
+use crate::crypto::read_existing_password;
+use crate::storage::{AppPaths, list_team_configs};
 use crate::tui_ops;
-
-#[derive(Debug)]
-struct TeamAccess {
-    config: TeamConfig,
-    cipher_key: [u8; 32],
-}
 
 #[derive(Debug)]
 struct ResolvedTeam {
@@ -139,17 +130,13 @@ fn get_secret(
     key: &str,
     password: Option<&str>,
 ) -> Result<()> {
-    let cipher_key = if let Some(password) = password {
-        tui_ops::open_team(paths, &team.name, Some(password))?.cipher_key
+    let value = if let Some(password) = password {
+        let access = tui_ops::open_team(paths, &team.name, Some(password))?;
+        tui_ops::get_secret_with_access(paths, &access, key)?
     } else {
-        load_team_for_get(paths, &team.name)?.1
+        tui_ops::get_secret(paths, &team.name, key)?
     };
-    let record = load_secret_record(paths, &team.name, key)?;
-    verify_secret_key(&cipher_key, key, &record)?;
-    println!(
-        "{}",
-        decrypt_text(&cipher_key, &record.encrypted_value, &record.value_nonce)?
-    );
+    println!("{value}");
     Ok(())
 }
 
@@ -178,54 +165,6 @@ fn delete_secret(
     Ok(())
 }
 
-fn load_team_for_get(paths: &AppPaths, team: &str) -> Result<(TeamConfig, [u8; 32])> {
-    let config = load_team_config(paths, team)?;
-    if let Some(cipher_key) = config.cipher_key.clone() {
-        return Ok((config, decode_cipher_key(team, &cipher_key)?));
-    }
-
-    migrate_team_cipher_key(paths, config, team)
-}
-
-fn authenticate_team_with_password(
-    paths: &AppPaths,
-    mut config: TeamConfig,
-    team: &str,
-    password: &str,
-) -> Result<TeamAccess> {
-    let salt = STANDARD
-        .decode(&config.salt)
-        .with_context(|| format!("invalid salt for {team}"))?;
-    let expected = STANDARD
-        .decode(&config.password_verifier)
-        .with_context(|| format!("invalid password verifier for {team}"))?;
-    let derived_key = derive_key(password, &salt)?;
-
-    if expected != password_verifier(&derived_key) {
-        bail!("invalid password for team: {team}");
-    }
-
-    if config.cipher_key.is_none() {
-        config.cipher_key = Some(STANDARD.encode(derived_key));
-        crate::storage::save_team_config(paths, &config)?;
-    }
-
-    Ok(TeamAccess {
-        config,
-        cipher_key: derived_key,
-    })
-}
-
-fn migrate_team_cipher_key(
-    paths: &AppPaths,
-    config: TeamConfig,
-    team: &str,
-) -> Result<(TeamConfig, [u8; 32])> {
-    let password = read_existing_password(team)?;
-    let access = authenticate_team_with_password(paths, config, team, &password)?;
-    Ok((access.config, access.cipher_key))
-}
-
 fn resolve_create_passwords(args: &TeamCreateArgs) -> Result<(String, String)> {
     match (&args.password, &args.password_confirm) {
         (Some(password), Some(confirm)) => Ok((password.clone(), confirm.clone())),
@@ -250,26 +189,6 @@ fn resolve_existing_password(team: &str, password: Option<&str>) -> Result<Strin
         Some(password) => Ok(password.to_string()),
         None => read_existing_password(team),
     }
-}
-
-fn decode_cipher_key(team: &str, cipher_key: &str) -> Result<[u8; 32]> {
-    let raw = STANDARD
-        .decode(cipher_key)
-        .with_context(|| format!("invalid stored cipher key for {team}"))?;
-    raw.try_into()
-        .map_err(|_| anyhow::anyhow!("invalid stored cipher key length for {team}"))
-}
-
-fn verify_secret_key(
-    cipher_key: &[u8; 32],
-    expected_key: &str,
-    record: &SecretRecord,
-) -> Result<()> {
-    let stored_key = decrypt_text(cipher_key, &record.encrypted_key, &record.key_nonce)?;
-    if stored_key != expected_key {
-        bail!("secret key mismatch for {expected_key}");
-    }
-    Ok(())
 }
 
 #[cfg(test)]

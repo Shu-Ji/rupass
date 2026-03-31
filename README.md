@@ -13,7 +13,7 @@ rupass --help
 ## 规则
 
 - 团队名必须以 `_team` 结尾。
-- 每个团队有自己的独立配置和本地密钥目录。
+- 每个团队有自己的独立配置文件和一个本地加密 secrets 文件。
 - 不传团队时：
   - 如果本地没有团队，需要先运行 `rupass tui` 创建团队
   - 如果本地只有一个团队，默认使用它
@@ -26,7 +26,7 @@ rupass --help
 ├── config/
 │   └── your_team.sec
 └── store/
-    └── your_team/
+    └── your_team.json
 ```
 
 ## 开发命令

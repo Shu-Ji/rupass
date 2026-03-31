@@ -1,7 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+
 use super::*;
-use crate::storage::save_team_config;
+use crate::crypto::{derive_key, password_verifier};
+use crate::storage::{TeamConfig, save_team_config};
 
 fn test_paths() -> AppPaths {
     let suffix = SystemTime::now()
@@ -74,9 +77,9 @@ fn load_team_for_get_uses_stored_cipher_key_without_password() {
     )
     .unwrap();
 
-    let (_, unlocked) = load_team_for_get(&paths, "dev_team").unwrap();
+    let unlocked = tui_ops::open_team(&paths, "dev_team", None).unwrap();
 
-    assert_eq!(unlocked, key);
+    assert_eq!(unlocked.cipher_key, key);
 }
 
 #[test]
@@ -96,8 +99,7 @@ fn authenticate_requires_valid_password() {
     )
     .unwrap();
 
-    let config = load_team_config(&paths, "dev_team").unwrap();
-    let err = authenticate_team_with_password(&paths, config, "dev_team", "wrong").unwrap_err();
+    let err = tui_ops::unlock_team(&paths, "dev_team", "wrong").unwrap_err();
 
     assert!(
         err.to_string()
