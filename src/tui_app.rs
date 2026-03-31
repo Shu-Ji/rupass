@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::storage::{AppPaths, SyncBackend, TeamS3Config};
+use crate::storage::AppPaths;
 use crate::tui_ops::{self, TeamAccess, TeamSummary};
 
 pub(crate) struct App {
@@ -39,36 +39,18 @@ pub(crate) enum Dialog {
 }
 
 pub(crate) enum PendingAction {
-    SyncCurrentTeam,
-    SyncAllTeams,
-    ImportTeam {
-        remote: String,
-        password: String,
-    },
-    AddSecret {
+    Add {
         team: String,
         key: String,
         value: String,
     },
-    EditSecret {
+    Edit {
         team: String,
         original_key: String,
         new_key: String,
         value: String,
     },
-    SetRemote {
-        team: String,
-        url: String,
-    },
-    SetS3 {
-        team: String,
-        config: Option<TeamS3Config>,
-    },
-    SetSyncBackend {
-        team: String,
-        backend: SyncBackend,
-    },
-    DeleteSecret {
+    Delete {
         team: String,
         key: String,
     },
@@ -85,13 +67,9 @@ pub(crate) struct FormDialog {
 
 pub(crate) enum FormKind {
     CreateTeam,
-    ImportTeam,
     UnlockTeam(String),
     AddSecret(String),
     EditSecret { team: String, original_key: String },
-    ChooseSyncBackend(String),
-    SetRemote(String),
-    SetS3(String),
     DeleteTeam(String),
 }
 
@@ -193,12 +171,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_team_selection(1),
             KeyCode::Enter => self.enter_team(),
             KeyCode::Char('c') => self.open_create_team(),
-            KeyCode::Char('i') => self.open_import_team(),
             KeyCode::Char('u') => self.open_unlock_team(),
-            KeyCode::Char('r') => self.open_choose_sync_backend(),
-            KeyCode::Char('g') => self.open_set_remote(),
-            KeyCode::Char('3') => self.open_set_s3(),
-            KeyCode::Char('s') => self.queue_sync_all_teams(),
             KeyCode::Char('x') => self.open_delete_team(),
             _ => {}
         }
@@ -212,10 +185,6 @@ impl App {
             KeyCode::Char('a') => self.open_add_secret(),
             KeyCode::Char('e') => self.open_edit_secret()?,
             KeyCode::Char('d') => self.open_delete_key(),
-            KeyCode::Char('s') => self.queue_sync_current_team(),
-            KeyCode::Char('r') => self.open_choose_sync_backend(),
-            KeyCode::Char('g') => self.open_set_remote(),
-            KeyCode::Char('3') => self.open_set_s3(),
             KeyCode::Char('u') => self.open_unlock_team(),
             KeyCode::Esc => self.back_to_team_list(),
             _ => {}
@@ -228,8 +197,6 @@ impl App {
             return Ok(false);
         };
         let is_select_field = dialog.fields[dialog.index].options.is_some();
-        let is_clear_action = key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'));
         match key.code {
             KeyCode::Esc => self.dialog = Dialog::None,
             KeyCode::Tab => dialog.index = (dialog.index + 1) % dialog.fields.len(),
@@ -268,15 +235,6 @@ impl App {
                 }
             }
             KeyCode::Char(ch) => {
-                if is_clear_action {
-                    if matches!(dialog.kind, FormKind::SetRemote(_) | FormKind::SetS3(_)) {
-                        for field in &mut dialog.fields {
-                            field.value.clear();
-                        }
-                        dialog.error = None;
-                    }
-                    return Ok(false);
-                }
                 if is_select_field {
                     return Ok(false);
                 }
@@ -372,7 +330,7 @@ impl App {
         {
             *key_index = self.keys.len() - 1;
         }
-        self.sync_selected_secret_value()
+        self.load_selected_secret_value()
     }
 
     pub(crate) fn has_pending_action(&self) -> bool {
@@ -385,28 +343,16 @@ impl App {
         };
 
         let result = match action {
-            PendingAction::SyncCurrentTeam => self.sync_current_team(),
-            PendingAction::SyncAllTeams => self.sync_all_teams(),
-            PendingAction::ImportTeam { remote, password } => {
-                self.import_team_with_progress(&remote, &password)
-            }
-            PendingAction::AddSecret { team, key, value } => {
+            PendingAction::Add { team, key, value } => {
                 self.save_secret_with_progress(&team, &key, &key, &value, false)
             }
-            PendingAction::EditSecret {
+            PendingAction::Edit {
                 team,
                 original_key,
                 new_key,
                 value,
             } => self.save_secret_with_progress(&team, &original_key, &new_key, &value, true),
-            PendingAction::SetRemote { team, url } => self.set_remote_with_progress(&team, &url),
-            PendingAction::SetS3 { team, config } => self.set_s3_with_progress(&team, config),
-            PendingAction::SetSyncBackend { team, backend } => {
-                self.set_sync_backend_with_progress(&team, backend)
-            }
-            PendingAction::DeleteSecret { team, key } => {
-                self.delete_secret_with_progress(&team, &key)
-            }
+            PendingAction::Delete { team, key } => self.delete_secret_with_progress(&team, &key),
         };
         self.dialog = Dialog::None;
         result
@@ -427,66 +373,7 @@ impl App {
         self.pending_action = Some(action);
     }
 
-    fn queue_sync_current_team(&mut self) {
-        let Some(access) = self.selected_access() else {
-            self.status = "请先解锁团队，再执行同步".to_string();
-            return;
-        };
-        if !access.config.has_remote() {
-            self.status = format!("错误: 团队未配置远程: {}", access.config.team_name);
-            return;
-        }
-
-        self.queue_progress_action(
-            "同步中",
-            format!(
-                "正在同步团队 {}，完成后会自动关闭。",
-                access.config.team_name
-            ),
-            PendingAction::SyncCurrentTeam,
-        );
-    }
-
-    fn queue_sync_all_teams(&mut self) {
-        if self.teams.is_empty() {
-            self.status = "没有可同步的团队".to_string();
-            return;
-        }
-
-        let locked = self
-            .teams
-            .iter()
-            .filter(|team| !self.unlocked.contains_key(&team.team_name))
-            .map(|team| team.team_name.clone())
-            .collect::<Vec<_>>();
-        if !locked.is_empty() {
-            self.status = format!("错误: 请先解锁全部团队: {}", locked.join(", "));
-            return;
-        }
-
-        let ready = self
-            .teams
-            .iter()
-            .filter(|team| team.sync_backend.is_some())
-            .count();
-        if ready == 0 {
-            let names = self
-                .teams
-                .iter()
-                .map(|team| team.team_name.clone())
-                .collect::<Vec<_>>();
-            self.status = format!("错误: 没有已配置远程的团队: {}", names.join(", "));
-            return;
-        }
-
-        self.queue_progress_action(
-            "同步中",
-            format!("正在同步 {ready} 个团队，完成后会自动关闭。"),
-            PendingAction::SyncAllTeams,
-        );
-    }
-
-    fn sync_selected_secret_value(&mut self) -> Result<()> {
+    fn load_selected_secret_value(&mut self) -> Result<()> {
         let team_name = self.selected_team().map(|team| team.team_name.clone());
         let key = self.selected_key().map(str::to_string);
         if team_name.is_none() || key.is_none() || self.selected_access().is_none() {
@@ -502,7 +389,7 @@ impl App {
     }
 
     pub(crate) fn refresh_selected_secret_value(&mut self) {
-        if let Err(err) = self.sync_selected_secret_value() {
+        if let Err(err) = self.load_selected_secret_value() {
             self.current_secret_value = None;
             self.show_error(err.to_string());
         }

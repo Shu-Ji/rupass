@@ -6,13 +6,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::crypto::{
     decrypt_text, derive_key, encrypt_text, password_verifier, random_bytes, read_existing_password,
 };
-use crate::git_sync::ensure_git_repo;
 use crate::storage::{
-    AppPaths, SecretRecord, SyncBackend, TeamConfig, TeamS3Config, delete_secret_record,
-    list_secret_records, list_team_configs, load_secret_record, load_team_config,
-    save_secret_record, save_team_config, validate_team_name,
+    AppPaths, SecretRecord, TeamConfig, delete_secret_record, list_secret_records,
+    list_team_configs, load_secret_record, load_team_config, save_secret_record, save_team_config,
+    validate_team_name,
 };
-use crate::team_sync::sync_team_backends;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TeamAccess {
@@ -23,23 +21,13 @@ pub(crate) struct TeamAccess {
 #[derive(Clone, Debug)]
 pub(crate) struct TeamSummary {
     pub(crate) team_name: String,
-    pub(crate) sync_backend: Option<SyncBackend>,
-    pub(crate) git_remote: Option<String>,
-    pub(crate) s3_bucket: Option<String>,
 }
 
 pub(crate) fn list_teams(paths: &AppPaths) -> Result<Vec<TeamSummary>> {
     Ok(list_team_configs(paths)?
         .into_iter()
-        .map(|team| {
-            let sync_backend = team.effective_sync_backend();
-            let s3_bucket = team.s3.as_ref().map(|s3| s3.bucket.clone());
-            TeamSummary {
-                team_name: team.team_name,
-                sync_backend,
-                git_remote: team.git_remote,
-                s3_bucket,
-            }
+        .map(|team| TeamSummary {
+            team_name: team.team_name,
         })
         .collect())
 }
@@ -71,12 +59,8 @@ pub(crate) fn create_team(
         salt: STANDARD.encode(salt),
         password_verifier: STANDARD.encode(password_verifier(&key)),
         cipher_key: Some(STANDARD.encode(key)),
-        git_remote: None,
-        s3: None,
-        sync_backend: None,
     };
     save_team_config(paths, &config)?;
-    ensure_git_repo(&paths.team_store_dir(team))?;
     Ok(TeamAccess {
         config,
         cipher_key: key,
@@ -144,12 +128,7 @@ pub(crate) fn set_secret(
             key_nonce,
             value_nonce,
         },
-    )?;
-    sync_team_backends(
-        &paths.team_store_dir(&access.config.team_name),
-        &access.config,
-    )?;
-    Ok(())
+    )
 }
 
 pub(crate) fn update_secret(
@@ -191,10 +170,6 @@ pub(crate) fn update_secret(
         delete_secret_record(paths, &access.config.team_name, original_key)?;
     }
 
-    sync_team_backends(
-        &paths.team_store_dir(&access.config.team_name),
-        &access.config,
-    )?;
     Ok(())
 }
 
@@ -202,79 +177,7 @@ pub(crate) fn delete_secret(paths: &AppPaths, access: &TeamAccess, key: &str) ->
     let record = load_secret_record(paths, &access.config.team_name, key)?;
     verify_secret_key(&access.cipher_key, key, &record)?;
     delete_secret_record(paths, &access.config.team_name, key)?;
-    sync_team_backends(
-        &paths.team_store_dir(&access.config.team_name),
-        &access.config,
-    )?;
     Ok(())
-}
-
-pub(crate) fn set_remote(paths: &AppPaths, access: &TeamAccess, url: &str) -> Result<TeamAccess> {
-    let mut config = access.config.clone();
-    config.git_remote = if url.trim().is_empty() {
-        None
-    } else {
-        Some(url.trim().to_string())
-    };
-    config.sync_backend = match (&config.git_remote, &config.s3) {
-        (Some(_), _) => Some(SyncBackend::Git),
-        (None, Some(_)) => Some(SyncBackend::S3),
-        (None, None) => None,
-    };
-    save_team_config(paths, &config)?;
-    Ok(TeamAccess {
-        config,
-        cipher_key: access.cipher_key,
-    })
-}
-
-pub(crate) fn set_s3(
-    paths: &AppPaths,
-    access: &TeamAccess,
-    s3: Option<TeamS3Config>,
-) -> Result<TeamAccess> {
-    let mut config = access.config.clone();
-    config.s3 = s3;
-    config.sync_backend = match (&config.git_remote, &config.s3) {
-        (_, Some(_)) => Some(SyncBackend::S3),
-        (Some(_), None) => Some(SyncBackend::Git),
-        (None, None) => None,
-    };
-    save_team_config(paths, &config)?;
-    Ok(TeamAccess {
-        config,
-        cipher_key: access.cipher_key,
-    })
-}
-
-pub(crate) fn set_sync_backend(
-    paths: &AppPaths,
-    access: &TeamAccess,
-    backend: SyncBackend,
-) -> Result<TeamAccess> {
-    let mut config = access.config.clone();
-    match backend {
-        SyncBackend::Git if config.git_remote.is_none() => {
-            bail!("Git 远程尚未配置");
-        }
-        SyncBackend::S3 if config.s3.is_none() => {
-            bail!("S3 远程尚未配置");
-        }
-        _ => {}
-    }
-    config.sync_backend = Some(backend);
-    save_team_config(paths, &config)?;
-    Ok(TeamAccess {
-        config,
-        cipher_key: access.cipher_key,
-    })
-}
-
-pub(crate) fn sync_team(paths: &AppPaths, access: &TeamAccess) -> Result<()> {
-    sync_team_backends(
-        &paths.team_store_dir(&access.config.team_name),
-        &access.config,
-    )
 }
 
 pub(crate) fn delete_team(paths: &AppPaths, team: &str, password: &str) -> Result<()> {

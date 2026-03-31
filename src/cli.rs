@@ -23,18 +23,14 @@ pub(crate) struct TeamCommandInput {
     name = "rupass",
     version,
     disable_help_subcommand = true,
-    about = "轻量级团队密码管理工具",
+    about = "轻量级本地密码管理工具",
     override_usage = "rupass <COMMAND>\n       rupass [team] <COMMAND>",
-    long_about = "rupass 是一个轻量级团队密码管理工具。\n支持 TUI 和完整 CLI，便于脚本或 AI 通过命令行管理团队、密钥与同步。",
+    long_about = "rupass 是一个轻量级本地密码管理工具。\n支持 TUI 和完整 CLI，便于脚本或 AI 通过命令行管理团队与密钥。",
     after_help = concat!(
         "通用示例:\n",
         "  rupass tui\n",
         "  rupass team list\n",
         "  rupass team create my_team --password secret\n",
-        "  rupass team import git@github.com:org/repo.git --password secret\n",
-        "  rupass team set-remote my_team git@github.com:org/repo.git\n",
-        "  rupass team set-s3 my_team --endpoint https://s3.example.com --region us-east-1 --bucket my-bucket --access-key-id AKIA... --secret-access-key xxxx --root team\n",
-        "  rupass sync-all\n",
         "\n",
         "默认团队示例（本地仅有一个团队时）:\n",
         "  rupass list\n",
@@ -63,15 +59,9 @@ pub(crate) enum Commands {
     )]
     Tui,
     #[command(
-        name = "sync-all",
-        about = "同步所有团队仓库",
-        after_help = "示例:\n  rupass sync-all"
-    )]
-    SyncAll,
-    #[command(
         name = "team",
         about = "团队管理命令",
-        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import git@github.com:org/repo.git --password secret\n  rupass team set-remote my_team git@github.com:org/repo.git\n  rupass team set-s3 my_team --endpoint https://s3.example.com --region us-east-1 --bucket my-bucket --access-key-id AKIA... --secret-access-key xxxx --root team"
+        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team del my_team --password secret"
     )]
     Team {
         #[command(subcommand)]
@@ -85,20 +75,8 @@ pub(crate) enum TeamCommands {
     List,
     #[command(about = "创建团队")]
     Create(TeamCreateArgs),
-    #[command(about = "从远程仓库导入团队")]
-    Import(TeamImportArgs),
     #[command(name = "del", about = "删除团队")]
     Del(TeamPasswordTargetArgs),
-    #[command(about = "设置团队远程仓库")]
-    SetRemote(TeamSetRemoteArgs),
-    #[command(about = "清空团队远程仓库")]
-    ClearRemote(TeamPasswordTargetArgs),
-    #[command(about = "设置团队 S3 远程")]
-    SetS3(TeamSetS3Args),
-    #[command(about = "清空团队 S3 远程")]
-    ClearS3(TeamClearS3Args),
-    #[command(about = "同步指定团队")]
-    Sync(TeamPasswordTargetArgs),
 }
 
 #[derive(Args, Debug)]
@@ -115,57 +93,7 @@ pub(crate) struct TeamCreateArgs {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct TeamImportArgs {
-    #[arg(help = "远程仓库地址；兼容旧格式时也可先传团队名", required = true, num_args = 1..=2)]
-    pub(crate) args: Vec<String>,
-    #[arg(long, help = "本地团队名；不传则从远程仓库元数据读取")]
-    pub(crate) team: Option<String>,
-    #[arg(long, help = "团队密码；不传则交互输入")]
-    pub(crate) password: Option<String>,
-}
-
-#[derive(Args, Debug)]
 pub(crate) struct TeamPasswordTargetArgs {
-    #[arg(help = "团队英文名，必须以 _team 结尾")]
-    pub(crate) team: String,
-    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
-    pub(crate) password: Option<String>,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct TeamSetRemoteArgs {
-    #[arg(help = "团队英文名，必须以 _team 结尾")]
-    pub(crate) team: String,
-    #[arg(help = "远程仓库地址")]
-    pub(crate) url: String,
-    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
-    pub(crate) password: Option<String>,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct TeamSetS3Args {
-    #[arg(help = "团队英文名，必须以 _team 结尾")]
-    pub(crate) team: String,
-    #[arg(long, help = "S3 endpoint，例如 https://s3.example.com")]
-    pub(crate) endpoint: String,
-    #[arg(long, help = "S3 region，例如 us-east-1")]
-    pub(crate) region: String,
-    #[arg(long, help = "S3 bucket")]
-    pub(crate) bucket: String,
-    #[arg(long = "access-key-id", help = "S3 access key id")]
-    pub(crate) access_key_id: String,
-    #[arg(long = "secret-access-key", help = "S3 secret access key")]
-    pub(crate) secret_access_key: String,
-    #[arg(long, help = "S3 root prefix，可选")]
-    pub(crate) root: Option<String>,
-    #[arg(long, default_value_t = true, help = "是否使用 path-style 访问")]
-    pub(crate) force_path_style: bool,
-    #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
-    pub(crate) password: Option<String>,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct TeamClearS3Args {
     #[arg(help = "团队英文名，必须以 _team 结尾")]
     pub(crate) team: String,
     #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
@@ -405,18 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_sync_all_command() {
-        let cli = parse_from(["rupass", "sync-all"]).unwrap();
-        match cli {
-            ParsedCli::Standard(cli) => match cli.command {
-                Commands::SyncAll => {}
-                command => panic!("unexpected command: {command:?}"),
-            },
-            other => panic!("unexpected cli: {other:?}"),
-        }
-    }
-
-    #[test]
     fn parses_team_create_command() {
         let cli = parse_from([
             "rupass",
@@ -433,57 +349,6 @@ mod tests {
                     TeamCommands::Create(args) => {
                         assert_eq!(args.team, "my_team");
                         assert_eq!(args.password.as_deref(), Some("secret"));
-                    }
-                    other => panic!("unexpected team command: {other:?}"),
-                },
-                command => panic!("unexpected command: {command:?}"),
-            },
-            other => panic!("unexpected cli: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_team_import_command_without_team() {
-        let cli = parse_from([
-            "rupass",
-            "team",
-            "import",
-            "git@github.com:org/repo.git",
-            "--password",
-            "secret",
-        ])
-        .unwrap();
-        match cli {
-            ParsedCli::Standard(cli) => match cli.command {
-                Commands::Team { command } => match command {
-                    TeamCommands::Import(args) => {
-                        assert_eq!(args.args, vec!["git@github.com:org/repo.git"]);
-                        assert_eq!(args.team, None);
-                        assert_eq!(args.password.as_deref(), Some("secret"));
-                    }
-                    other => panic!("unexpected team command: {other:?}"),
-                },
-                command => panic!("unexpected command: {command:?}"),
-            },
-            other => panic!("unexpected cli: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_team_import_command_with_legacy_team_arg() {
-        let cli = parse_from([
-            "rupass",
-            "team",
-            "import",
-            "my_team",
-            "git@github.com:org/repo.git",
-        ])
-        .unwrap();
-        match cli {
-            ParsedCli::Standard(cli) => match cli.command {
-                Commands::Team { command } => match command {
-                    TeamCommands::Import(args) => {
-                        assert_eq!(args.args, vec!["my_team", "git@github.com:org/repo.git"]);
                     }
                     other => panic!("unexpected team command: {other:?}"),
                 },

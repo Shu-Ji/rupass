@@ -13,12 +13,11 @@ rupass --help
 ## 规则
 
 - 团队名必须以 `_team` 结尾。
-- 每个团队有自己的独立配置(密钥，远程git地址等)。
+- 每个团队有自己的独立配置和本地密钥目录。
 - 不传团队时：
   - 如果本地没有团队，需要先运行 `rupass tui` 创建团队
   - 如果本地只有一个团队，默认使用它
   - 如果本地有多个团队，必须显式传团队
-- 新机器导入已有团队时，运行 `rupass team import <remote>`
 
 ## 存储目录
 
@@ -48,25 +47,7 @@ pnpm clippy
 rupass tui
 rupass team list
 rupass team create my_team --password secret
-rupass team import git@github.com:org/repo.git --password secret
-rupass team set-remote my_team git@github.com:org/repo.git
-rupass sync-all
-```
-
-## 新机器导入
-
-如果远程仓库已经由旧机器同步过最新的 team 元数据，可直接导入：
-
-```bash
-rupass team import git@github.com:org/repo.git --password secret
-```
-
-导入后即可继续同步：
-
-```bash
-rupass team sync my_team --password secret
-# 或
-rupass sync-all
+rupass team del my_team --password secret
 ```
 
 ### 默认团队示例
@@ -90,8 +71,6 @@ rupass my_team get db_password
 rupass my_team set db_password 'hello123'
 rupass my_team del db_password
 rupass team del my_team --password secret
-rupass team clear-remote my_team --password secret
-rupass team sync my_team --password secret
 ```
 
 ## 安装 release

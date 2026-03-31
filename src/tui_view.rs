@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::tui_app::{App, Dialog, FormDialog, FormKind, Page};
+use crate::tui_app::{App, Dialog, FormDialog, Page};
 use crate::tui_style::{
     accent_style, action_line, danger_style, muted, primary_style, section_style,
     split_status_lines, status_style, success_style,
@@ -130,22 +130,6 @@ fn team_detail_panel(app: &App) -> Paragraph<'_> {
                 },
             ),
         ]));
-        lines.push(Line::from(format!(
-            "Sync: {}",
-            match team.sync_backend {
-                Some(crate::storage::SyncBackend::Git) => "Git",
-                Some(crate::storage::SyncBackend::S3) => "S3",
-                None => "未选择",
-            }
-        )));
-        lines.push(Line::from(format!(
-            "Git Remote: {}",
-            team.git_remote.as_deref().unwrap_or("未设置")
-        )));
-        lines.push(Line::from(format!(
-            "S3 Bucket: {}",
-            team.s3_bucket.as_deref().unwrap_or("未设置")
-        )));
     }
     Paragraph::new(Text::from(lines))
         .block(block("团队信息", false))
@@ -207,7 +191,7 @@ fn secret_detail_panel(app: &App) -> Paragraph<'_> {
             lines.push(Line::from(vec![
                 Span::styled("当前 Value: ", muted()),
                 match app.selected_secret_value() {
-                    Some(value) if value.is_empty() => Span::styled("(空)", accent_style()),
+                    Some("") => Span::styled("(空)", accent_style()),
                     Some(value) => Span::styled(
                         value.to_string(),
                         Style::default().fg(Color::Rgb(242, 208, 129)),
@@ -303,21 +287,6 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
         Span::styled("Esc", primary_style().add_modifier(Modifier::BOLD)),
         Span::raw(" 取消"),
     ]));
-    if matches!(dialog.kind, FormKind::SetRemote(_)) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("提示: ", muted()),
-            Span::styled("Ctrl+X 一键清空，或手动留空后回车", accent_style()),
-        ]));
-    }
-    if matches!(dialog.kind, FormKind::SetRemote(_) | FormKind::SetS3(_)) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("清空: ", muted()),
-            Span::styled("Ctrl+X", primary_style().add_modifier(Modifier::BOLD)),
-            Span::raw(" 一键清空当前配置"),
-        ]));
-    }
     if dialog.fields.iter().any(|field| field.options.is_some()) {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -335,11 +304,7 @@ fn render_form_dialog(frame: &mut Frame, dialog: &FormDialog) {
         )));
     }
     let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-    let width = if matches!(dialog.kind, FormKind::SetS3(_)) {
-        82
-    } else {
-        72
-    };
+    let width = 72;
     let area = popup_area(frame.area(), width, height);
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -488,13 +453,8 @@ fn primary_action_lines(app: &App) -> Vec<Line<'static>> {
 fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
     match app.page {
         Page::TeamList => vec![
-            action_line("i", "从远程导入团队", primary_style()),
             action_line("c", "创建团队", primary_style()),
             action_line("u", "解锁团队", accent_style()),
-            action_line("r", "选择 Git/S3 同步", accent_style()),
-            action_line("g", "设置/清空 Git 远程", accent_style()),
-            action_line("3", "设置 S3 远程", accent_style()),
-            action_line("s", "同步全部团队", success_style()),
             action_line("x", "删除当前团队", danger_style()),
             action_line("h", "帮助", muted()),
             action_line("q", "退出", muted()),
@@ -503,10 +463,6 @@ fn shortcut_lines(app: &App) -> Vec<Line<'static>> {
             action_line("a", "新增 key", primary_style()),
             action_line("e", "更新 key", accent_style()),
             action_line("d", "删除当前 key", danger_style()),
-            action_line("r", "选择 Git/S3 同步", accent_style()),
-            action_line("g", "设置/清空 Git 远程", accent_style()),
-            action_line("s", "同步当前团队", success_style()),
-            action_line("3", "设置 S3 远程", accent_style()),
             action_line("u", "解锁当前团队", accent_style()),
             action_line("h", "帮助", muted()),
             action_line("q", "退出", muted()),

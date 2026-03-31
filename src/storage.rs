@@ -17,34 +17,6 @@ pub(crate) struct TeamConfig {
     pub(crate) salt: String,
     pub(crate) password_verifier: String,
     pub(crate) cipher_key: Option<String>,
-    pub(crate) git_remote: Option<String>,
-    pub(crate) s3: Option<TeamS3Config>,
-    pub(crate) sync_backend: Option<SyncBackend>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum SyncBackend {
-    Git,
-    S3,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub(crate) struct TeamS3Config {
-    pub(crate) endpoint: String,
-    pub(crate) region: String,
-    pub(crate) bucket: String,
-    pub(crate) access_key_id: String,
-    pub(crate) secret_access_key: String,
-    pub(crate) root: String,
-    pub(crate) force_path_style: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub(crate) struct TeamMetadata {
-    pub(crate) team_name: String,
-    pub(crate) salt: String,
-    pub(crate) password_verifier: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,47 +56,6 @@ impl AppPaths {
     pub(crate) fn secret_path(&self, team: &str, key: &str) -> PathBuf {
         let digest = hex::encode(Sha256::digest(key.as_bytes()));
         self.team_store_dir(team).join(format!("{digest}.json"))
-    }
-}
-
-impl TeamConfig {
-    pub(crate) fn has_remote(&self) -> bool {
-        self.effective_sync_backend().is_some()
-    }
-
-    pub(crate) fn effective_sync_backend(&self) -> Option<SyncBackend> {
-        match self.sync_backend {
-            Some(SyncBackend::Git) if self.git_remote.is_some() => Some(SyncBackend::Git),
-            Some(SyncBackend::S3) if self.s3.is_some() => Some(SyncBackend::S3),
-            Some(_) => None,
-            None => {
-                if self.git_remote.is_some() {
-                    Some(SyncBackend::Git)
-                } else if self.s3.is_some() {
-                    Some(SyncBackend::S3)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub(crate) fn sync_backend_label(&self) -> &'static str {
-        match self.effective_sync_backend() {
-            Some(SyncBackend::Git) => "Git",
-            Some(SyncBackend::S3) => "S3",
-            None => "未选择",
-        }
-    }
-}
-
-impl From<&TeamConfig> for TeamMetadata {
-    fn from(config: &TeamConfig) -> Self {
-        Self {
-            team_name: config.team_name.clone(),
-            salt: config.salt.clone(),
-            password_verifier: config.password_verifier.clone(),
-        }
     }
 }
 

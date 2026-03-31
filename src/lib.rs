@@ -1,10 +1,7 @@
 mod app;
 mod cli;
 mod crypto;
-mod git_sync;
-mod s3_sync;
 mod storage;
-mod team_sync;
 mod tui;
 mod tui_actions;
 mod tui_app;
