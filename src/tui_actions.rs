@@ -371,7 +371,7 @@ mod tests {
             "rupass-tui-actions-test-{}-{suffix}",
             std::process::id()
         ));
-        AppPaths::from_dirs(base.join("config"), base.join("store"))
+        AppPaths::from_dirs(base.join("privite"), base.join("public"))
     }
 
     #[test]

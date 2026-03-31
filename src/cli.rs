@@ -31,6 +31,7 @@ pub(crate) struct TeamCommandInput {
         "  rupass tui\n",
         "  rupass team list\n",
         "  rupass team create my_team --password secret\n",
+        "  rupass team import-file ./finn_team.json --password secret\n",
         "\n",
         "默认团队示例（本地仅有一个团队时）:\n",
         "  rupass list\n",
@@ -61,7 +62,7 @@ pub(crate) enum Commands {
     #[command(
         name = "team",
         about = "团队管理命令",
-        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team del my_team --password secret"
+        after_help = "示例:\n  rupass team list\n  rupass team create my_team --password secret\n  rupass team import-file ./finn_team.json --password secret\n  rupass team del my_team --password secret"
     )]
     Team {
         #[command(subcommand)]
@@ -75,6 +76,8 @@ pub(crate) enum TeamCommands {
     List,
     #[command(about = "创建团队")]
     Create(TeamCreateArgs),
+    #[command(name = "import-file", about = "从 team.json 导入团队")]
+    ImportFile(TeamImportFileArgs),
     #[command(name = "del", about = "删除团队")]
     Del(TeamPasswordTargetArgs),
 }
@@ -97,6 +100,14 @@ pub(crate) struct TeamPasswordTargetArgs {
     #[arg(help = "团队英文名，必须以 _team 结尾")]
     pub(crate) team: String,
     #[arg(long, help = "团队密码；不传时会尝试使用已缓存密钥，必要时再交互输入")]
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct TeamImportFileArgs {
+    #[arg(help = "team.json 文件路径")]
+    pub(crate) path: String,
+    #[arg(long, help = "团队密码；不传则交互输入")]
     pub(crate) password: Option<String>,
 }
 
@@ -348,6 +359,32 @@ mod tests {
                 Commands::Team { command } => match command {
                     TeamCommands::Create(args) => {
                         assert_eq!(args.team, "my_team");
+                        assert_eq!(args.password.as_deref(), Some("secret"));
+                    }
+                    other => panic!("unexpected team command: {other:?}"),
+                },
+                command => panic!("unexpected command: {command:?}"),
+            },
+            other => panic!("unexpected cli: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_team_import_file_command() {
+        let cli = parse_from([
+            "rupass",
+            "team",
+            "import-file",
+            "./finn_team.json",
+            "--password",
+            "secret",
+        ])
+        .unwrap();
+        match cli {
+            ParsedCli::Standard(cli) => match cli.command {
+                Commands::Team { command } => match command {
+                    TeamCommands::ImportFile(args) => {
+                        assert_eq!(args.path, "./finn_team.json");
                         assert_eq!(args.password.as_deref(), Some("secret"));
                     }
                     other => panic!("unexpected team command: {other:?}"),

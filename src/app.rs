@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 
-use crate::cli::{Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamScopedCommands};
+use crate::cli::{
+    Commands, ParsedCli, TeamCommands, TeamCreateArgs, TeamImportFileArgs, TeamScopedCommands,
+};
 use crate::crypto::read_existing_password;
 use crate::storage::{AppPaths, list_team_configs};
 use crate::tui_ops;
@@ -47,6 +49,7 @@ fn dispatch_team_command(paths: &AppPaths, command: TeamCommands) -> Result<()> 
     match command {
         TeamCommands::List => list_teams(paths),
         TeamCommands::Create(args) => create_team(paths, args),
+        TeamCommands::ImportFile(args) => import_team_file(paths, args),
         TeamCommands::Del(args) => delete_team(paths, &args.team, args.password.as_deref()),
     }
 }
@@ -112,6 +115,16 @@ fn delete_team(paths: &AppPaths, team: &str, password: Option<&str>) -> Result<(
     let password = resolve_existing_password(team, password)?;
     tui_ops::delete_team(paths, team, &password)?;
     println!("deleted team: {team}");
+    Ok(())
+}
+
+fn import_team_file(paths: &AppPaths, args: TeamImportFileArgs) -> Result<()> {
+    let password = match args.password {
+        Some(password) => password,
+        None => read_existing_password("import")?,
+    };
+    let team = tui_ops::import_team_file(paths, &args.path, &password)?;
+    println!("imported team: {team}");
     Ok(())
 }
 

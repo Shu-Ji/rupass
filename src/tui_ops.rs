@@ -1,5 +1,3 @@
-use std::fs;
-
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
@@ -7,10 +5,11 @@ use crate::crypto::{
     decrypt_text, derive_key, encrypt_text, password_verifier, random_bytes, read_existing_password,
 };
 use crate::storage::{
-    AppPaths, EncryptedTeamSecrets, TeamConfig, TeamSecrets, delete_team_secrets_file,
-    has_legacy_team_store, list_legacy_secret_records, list_team_configs, load_team_config,
-    load_team_secrets_file, remove_legacy_team_store, save_team_config, save_team_secrets_file,
-    validate_team_name,
+    AppPaths, EncryptedTeamSecrets, TeamConfig, TeamFile, TeamKeyCache, TeamSecrets,
+    copy_team_file_into_public, delete_key_cache, delete_team_file, has_legacy_team_store,
+    list_legacy_secret_records, list_team_configs, load_key_cache, load_team_config,
+    load_team_file_from_path, load_team_secrets_file, remove_legacy_team_store, save_key_cache,
+    save_team_file, validate_team_name,
 };
 
 #[derive(Clone, Debug)]
@@ -46,7 +45,7 @@ pub(crate) fn create_team(
     if password != password_confirm {
         bail!("passwords do not match");
     }
-    if paths.config_path(team).exists() {
+    if paths.team_file_path(team).exists() {
         bail!("team already exists: {team}");
     }
 
@@ -56,15 +55,41 @@ pub(crate) fn create_team(
         team_name: team.to_string(),
         salt: STANDARD.encode(salt),
         password_verifier: STANDARD.encode(password_verifier(&key)),
-        cipher_key: Some(STANDARD.encode(key)),
     };
-    save_team_config(paths, &config)?;
     let access = TeamAccess {
         config,
         cipher_key: key,
     };
     save_team_secrets(paths, &access, &TeamSecrets::default())?;
+    save_key_cache(
+        paths,
+        team,
+        &TeamKeyCache {
+            cipher_key: STANDARD.encode(key),
+        },
+    )?;
     Ok(access)
+}
+
+pub(crate) fn import_team_file(
+    paths: &AppPaths,
+    file_path: &str,
+    password: &str,
+) -> Result<String> {
+    let team_file = load_team_file_from_path(std::path::Path::new(file_path))?;
+    if paths.team_file_path(&team_file.team_name).exists() {
+        bail!("team already exists: {}", team_file.team_name);
+    }
+    let key = verify_team_password(&team_file, password)?;
+    copy_team_file_into_public(paths, &team_file)?;
+    save_key_cache(
+        paths,
+        &team_file.team_name,
+        &TeamKeyCache {
+            cipher_key: STANDARD.encode(key),
+        },
+    )?;
+    Ok(team_file.team_name)
 }
 
 pub(crate) fn unlock_team(paths: &AppPaths, team: &str, password: &str) -> Result<TeamAccess> {
@@ -83,10 +108,10 @@ pub(crate) fn open_team(
         return authenticate_team(paths, config, team, password);
     }
 
-    if let Some(cipher_key) = config.cipher_key.clone() {
+    if let Some(cache) = load_key_cache(paths, team)? {
         return Ok(TeamAccess {
             config,
-            cipher_key: decode_cipher_key(team, &cipher_key)?,
+            cipher_key: decode_cipher_key(team, &cache.cipher_key)?,
         });
     }
 
@@ -100,13 +125,8 @@ pub(crate) fn list_keys(paths: &AppPaths, access: &TeamAccess) -> Result<Vec<Str
 }
 
 pub(crate) fn get_secret(paths: &AppPaths, team: &str, key: &str) -> Result<String> {
-    let (_, cipher_key) = load_team_for_get(paths, team)?;
-    let store = load_team_secrets_with_key(paths, team, &cipher_key)?;
-    store
-        .secrets
-        .get(key)
-        .cloned()
-        .ok_or_else(|| anyhow!("secret not found: {key}"))
+    let access = load_team_for_get(paths, team)?;
+    get_secret_with_access(paths, &access, key)
 }
 
 pub(crate) fn get_secret_with_access(
@@ -169,49 +189,64 @@ pub(crate) fn delete_secret(paths: &AppPaths, access: &TeamAccess, key: &str) ->
 pub(crate) fn delete_team(paths: &AppPaths, team: &str, password: &str) -> Result<()> {
     let config = load_team_config(paths, team)?;
     authenticate_team(paths, config, team, password)?;
-
-    let config_path = paths.config_path(team);
-    if config_path.exists() {
-        fs::remove_file(&config_path)
-            .with_context(|| format!("failed to delete {}", config_path.display()))?;
-    }
-    delete_team_secrets_file(paths, team)?;
+    delete_team_file(paths, team)?;
+    delete_key_cache(paths, team)?;
     remove_legacy_team_store(paths, team)?;
     Ok(())
 }
 
-fn load_team_for_get(paths: &AppPaths, team: &str) -> Result<(TeamConfig, [u8; 32])> {
+fn load_team_for_get(paths: &AppPaths, team: &str) -> Result<TeamAccess> {
     let config = load_team_config(paths, team)?;
-    if let Some(cipher_key) = config.cipher_key.clone() {
-        return Ok((config, decode_cipher_key(team, &cipher_key)?));
-    }
-    bail!("team `{team}` needs one password-protected action first")
+    let Some(cache) = load_key_cache(paths, team)? else {
+        bail!("team `{team}` needs one password-protected action first");
+    };
+    Ok(TeamAccess {
+        config,
+        cipher_key: decode_cipher_key(team, &cache.cipher_key)?,
+    })
 }
 
 fn authenticate_team(
     paths: &AppPaths,
-    mut config: TeamConfig,
+    config: TeamConfig,
     team: &str,
     password: &str,
 ) -> Result<TeamAccess> {
-    let salt = STANDARD
-        .decode(&config.salt)
-        .with_context(|| format!("invalid salt for {team}"))?;
-    let expected = STANDARD
-        .decode(&config.password_verifier)
-        .with_context(|| format!("invalid password verifier for {team}"))?;
-    let derived_key = derive_key(password, &salt)?;
-    if expected != password_verifier(&derived_key) {
-        bail!("invalid password for team: {team}");
-    }
-    if config.cipher_key.is_none() {
-        config.cipher_key = Some(STANDARD.encode(derived_key));
-        save_team_config(paths, &config)?;
-    }
+    let key = verify_team_config_password(&config, password)?;
+    save_key_cache(
+        paths,
+        team,
+        &TeamKeyCache {
+            cipher_key: STANDARD.encode(key),
+        },
+    )?;
     Ok(TeamAccess {
         config,
-        cipher_key: derived_key,
+        cipher_key: key,
     })
+}
+
+fn verify_team_password(team_file: &TeamFile, password: &str) -> Result<[u8; 32]> {
+    let config = TeamConfig {
+        team_name: team_file.team_name.clone(),
+        salt: team_file.salt.clone(),
+        password_verifier: team_file.password_verifier.clone(),
+    };
+    verify_team_config_password(&config, password)
+}
+
+fn verify_team_config_password(config: &TeamConfig, password: &str) -> Result<[u8; 32]> {
+    let salt = STANDARD
+        .decode(&config.salt)
+        .with_context(|| format!("invalid salt for {}", config.team_name))?;
+    let expected = STANDARD
+        .decode(&config.password_verifier)
+        .with_context(|| format!("invalid password verifier for {}", config.team_name))?;
+    let derived_key = derive_key(password, &salt)?;
+    if expected != password_verifier(&derived_key) {
+        bail!("invalid password for team: {}", config.team_name);
+    }
+    Ok(derived_key)
 }
 
 fn load_team_secrets(paths: &AppPaths, access: &TeamAccess) -> Result<TeamSecrets> {
@@ -241,9 +276,9 @@ fn load_team_secrets_with_key(
 fn save_team_secrets(paths: &AppPaths, access: &TeamAccess, secrets: &TeamSecrets) -> Result<()> {
     let payload = serde_json::to_string(secrets).context("failed to serialize team secrets")?;
     let (encrypted_payload, nonce) = encrypt_text(&access.cipher_key, &payload)?;
-    save_team_secrets_file(
+    save_team_file(
         paths,
-        &access.config.team_name,
+        &access.config,
         &EncryptedTeamSecrets {
             encrypted_payload,
             nonce,
@@ -285,11 +320,10 @@ fn decode_cipher_key(team: &str, cipher_key: &str) -> Result<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::storage::{SecretRecord, save_team_config};
+    use crate::storage::SecretRecord;
 
     fn test_paths() -> AppPaths {
         let suffix = SystemTime::now()
@@ -300,7 +334,7 @@ mod tests {
             "rupass-tui-ops-test-{}-{suffix}",
             std::process::id()
         ));
-        AppPaths::from_dirs(base.join("config"), base.join("store"))
+        AppPaths::from_dirs(base.join("privite"), base.join("public"))
     }
 
     #[test]
@@ -310,28 +344,34 @@ mod tests {
 
         let salt = [3_u8; 16];
         let key = derive_key("secret", &salt).unwrap();
-        save_team_config(
-            &paths,
-            &TeamConfig {
-                team_name: "dev_team".to_string(),
-                salt: STANDARD.encode(salt),
-                password_verifier: STANDARD.encode(password_verifier(&key)),
-                cipher_key: Some(STANDARD.encode(key)),
-            },
+        std::fs::write(
+            paths.legacy_config_path("dev_team"),
+            format!(
+                r#"{{"team_name":"dev_team","salt":"{}","password_verifier":"{}","cipher_key":"{}"}}"#,
+                STANDARD.encode(salt),
+                STANDARD.encode(password_verifier(&key)),
+                STANDARD.encode(key)
+            ),
         )
         .unwrap();
+        std::fs::write(
+            paths.team_file_path("dev_team"),
+            br#"{"encrypted_payload":"payload","nonce":"nonce"}"#,
+        )
+        .unwrap();
+        paths.ensure_base_dirs().unwrap();
 
         let legacy_dir = paths.legacy_team_store_dir("dev_team");
-        fs::create_dir_all(&legacy_dir).unwrap();
-        fs::write(legacy_dir.join("config.json"), b"{}").unwrap();
-        fs::write(legacy_dir.join("rupass-team.json"), b"{}").unwrap();
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(legacy_dir.join("rupass-team.json"), b"{}").unwrap();
 
         let (encrypted_key_a, key_nonce_a) = encrypt_text(&key, "db_password").unwrap();
         let (encrypted_value_a, value_nonce_a) = encrypt_text(&key, "hello123").unwrap();
         let (encrypted_key_b, key_nonce_b) = encrypt_text(&key, "api_key").unwrap();
         let (encrypted_value_b, value_nonce_b) = encrypt_text(&key, "secret456").unwrap();
 
-        fs::write(
+        std::fs::write(
             legacy_dir
                 .join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"),
             serde_json::to_vec_pretty(&SecretRecord {
@@ -343,7 +383,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        fs::write(
+        std::fs::write(
             legacy_dir
                 .join("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json"),
             serde_json::to_vec_pretty(&SecretRecord {
@@ -364,7 +404,7 @@ mod tests {
             get_secret_with_access(&paths, &access, "db_password").unwrap(),
             "hello123"
         );
-        assert!(paths.team_store_path("dev_team").exists());
+        assert!(paths.team_file_path("dev_team").exists());
         assert!(!paths.legacy_team_store_dir("dev_team").exists());
     }
 }

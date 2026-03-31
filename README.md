@@ -13,7 +13,7 @@ rupass --help
 ## 规则
 
 - 团队名必须以 `_team` 结尾。
-- 每个团队有自己的独立配置文件和一个本地加密 secrets 文件。
+- 每个团队有一个可分发的 `public/<team>.json`，以及一个仅本地保存的 `privite/<team>.key`。
 - 不传团队时：
   - 如果本地没有团队，需要先运行 `rupass tui` 创建团队
   - 如果本地只有一个团队，默认使用它
@@ -23,9 +23,9 @@ rupass --help
 
 ```text
 ~/.rupass/
-├── config/
-│   └── your_team.sec
-└── store/
+├── privite/
+│   └── your_team.key
+└── public/
     └── your_team.json
 ```
 
@@ -47,6 +47,7 @@ pnpm clippy
 rupass tui
 rupass team list
 rupass team create my_team --password secret
+rupass team import-file ./finn_team.json --password secret
 rupass team del my_team --password secret
 ```
 
